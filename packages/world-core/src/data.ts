@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { RaceDef, WorldData } from './types.js';
+import type { Entitlement } from './monetization.js';
 
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
 
@@ -30,6 +31,14 @@ export interface Tutorial {
 /** Client-facing onboarding content (§17); the sim emits the trigger events. */
 export function loadTutorial(): Tutorial {
   return JSON.parse(readFileSync(path.join(DATA_DIR, 'tutorial.json'), 'utf8')) as Tutorial;
+}
+
+/** Honest-F2P entitlement catalog (§19). */
+export function loadMonetization(): { note: string; entitlements: Entitlement[] } {
+  return JSON.parse(readFileSync(path.join(DATA_DIR, 'monetization.json'), 'utf8')) as {
+    note: string;
+    entitlements: Entitlement[];
+  };
 }
 
 export function raceById(data: WorldData, id: string): RaceDef {

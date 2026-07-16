@@ -8,7 +8,8 @@
  *   pnpm --filter @pure-galaxy/world-core run worldsim -- --seed 7 --ticks 60 --every 12
  */
 import { loadWorldData, raceById } from '../src/data.js';
-import { createWorld, tick, worldHash } from '../src/world.js';
+import { createWorld, tick, worldHash, startNextSeason } from '../src/world.js';
+import { spectateSnapshot } from '../src/spectate.js';
 import { createFleet } from '../src/fleet.js';
 import { findPath } from '../src/galaxy.js';
 import { habitability, makeStock } from '../src/colony.js';
@@ -141,7 +142,20 @@ function main(): void {
   const check = buildWorld(seed, data, races);
   for (let t = 0; t < ticks; t++) stepWorld(check, data);
   const hashB = worldHash(check);
-  console.log(`\nState hash: ${hashA}  (deterministic: ${hashA === hashB ? 'YES' : 'NO'})`);
+  console.log(`\nSeason ${world.season.number} state hash: ${hashA}  (deterministic: ${hashA === hashB ? 'YES' : 'NO'})`);
+
+  // Soft restart into the next season, carrying Legacy forward (§15).
+  const next = startNextSeason(world, data);
+  console.log(`\n--- Soft restart: Season ${next.season.number} (Legacy carried forward) ---`);
+  for (const eid of Object.keys(next.empires).sort()) {
+    const e = next.empires[eid];
+    if (e.pirate || e.ancient) continue;
+    console.log(`  ${e.name.padEnd(11)} legacy ${String(e.legacy).padStart(4)}  head-start +${e.legacyBonusPct}%  titles: ${e.titles.slice(-2).join(', ') || '—'}`);
+  }
+
+  // Compact spectator/mobile snapshot of the new season's opening state.
+  const snap = spectateSnapshot(next, data);
+  console.log(`\nSpectator snapshot (S${snap.season}, t${snap.time}): ${snap.galaxy.systems} systems, leader ${snap.standings[0]?.empire} (rating ${snap.standings[0]?.rating}).`);
   console.log('');
 }
 

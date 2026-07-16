@@ -27,6 +27,7 @@ import { expeditionsStep } from './expeditions.js';
 import { invasionStep } from './invasion.js';
 import { checkVictory } from './victory.js';
 import { recruitAdmiral, assignAdmiral, admiralForFleet } from './admiral.js';
+import { makeSeason, seasonStep, carryLegacy, nextSeasonSeed, seasonCitizens } from './seasons.js';
 
 export interface CreateWorldOptions {
   races?: string[];
@@ -58,6 +59,7 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
     galacticFund: 0,
     victor: null,
     holds: { military: {}, economic: {} },
+    season: makeSeason(),
   };
 
   const usedPlanets = new Set<string>();
@@ -105,6 +107,9 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
       tradeVolume: 0,
       sanctionedUntil: 0,
       admiralIds: [],
+      legacy: 0,
+      titles: [],
+      legacyBonusPct: 0,
     };
     world.empires[empireId] = empire;
 
@@ -166,10 +171,22 @@ export function tick(world: WorldState, data: WorldData): WorldState {
   invasionStep(world, data);
   admiralAi(world, data, rng.fork(9));
   checkVictory(world, data);
+  seasonStep(world, data);
 
   world.time += 1;
   if (world.log.length > LOG_CAP) world.log = world.log.slice(-LOG_CAP);
   return world;
+}
+
+/**
+ * Soft restart into the next season (§15): a fresh galaxy that carries each
+ * empire's Legacy and head-start forward. The previous world is discarded.
+ */
+export function startNextSeason(old: WorldState, data: WorldData): WorldState {
+  const raceIds = seasonCitizens(old).map((id) => old.empires[id].raceId);
+  const fresh = createWorld(nextSeasonSeed(old), data, { races: raceIds });
+  carryLegacy(old, fresh);
+  return fresh;
 }
 
 /** Light AI: wealthy empires with an unled fleet recruit and assign an admiral. */
@@ -217,6 +234,8 @@ export function worldHash(world: WorldState): string {
           sanctionedUntil: e.sanctionedUntil,
           admirals: e.admiralIds.length,
           expeditionRun: e.expeditionRun ?? null,
+          legacy: e.legacy,
+          legacyBonusPct: e.legacyBonusPct,
         };
       }),
     colonies: Object.keys(world.colonies)

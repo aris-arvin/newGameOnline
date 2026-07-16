@@ -38,6 +38,9 @@ export function spawnPirates(world: WorldState, data: WorldData, count = 2, powe
     tradeVolume: 0,
     sanctionedUntil: 0,
     admiralIds: [],
+    legacy: 0,
+    titles: [],
+    legacyBonusPct: 0,
   };
   const systemIds = Object.keys(world.galaxy.systems).sort();
   for (let k = 0; k < count; k++) {

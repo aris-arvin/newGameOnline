@@ -1,0 +1,12 @@
+{
+  "note": "Honest F2P (§19): QoL, cosmetics and season pass only. Never resources, ships, speed-ups, or combat advantage. Enforced by auditCatalog + a test.",
+  "entitlements": [
+    { "id": "premium_queues", "name": "Premium: Extra Queue Slots", "category": "qol", "description": "More build and flight queue slots for convenience." },
+    { "id": "premium_governor_templates", "name": "Premium: Advanced Governor Templates", "category": "qol", "description": "Extra saved governor and doctrine templates." },
+    { "id": "premium_stats", "name": "Premium: Extended Statistics", "category": "qol", "description": "Deeper historical charts and analytics panels." },
+    { "id": "cosmetic_hull_skins", "name": "Cosmetic: Hull Skin Pack", "category": "cosmetic", "description": "Decorative paint schemes for your ship hulls." },
+    { "id": "cosmetic_emblems", "name": "Cosmetic: Alliance Emblems", "category": "cosmetic", "description": "Custom emblems and banners for your empire." },
+    { "id": "cosmetic_admiral_portraits", "name": "Cosmetic: Admiral Portraits", "category": "cosmetic", "description": "Alternate portrait art for your admirals." },
+    { "id": "season_pass", "name": "Season Pass", "category": "season_pass", "description": "Seasonal cosmetic track with emblems, titles and portraits." }
+  ]
+}

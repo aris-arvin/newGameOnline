@@ -38,6 +38,9 @@ export function spawnAncients(world: WorldState, data: WorldData): void {
     tradeVolume: 0,
     sanctionedUntil: 0,
     admiralIds: [],
+    legacy: 0,
+    titles: [],
+    legacyBonusPct: 0,
   };
 }
 

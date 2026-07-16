@@ -131,6 +131,21 @@ The same tick also runs the Phase-3 systems:
   **diplomatic** (two-term presidency), **science** (all Gate expeditions), and
   **economic** (sustained trade-share lead).
 
+### Seasons, Legacy & polish (Phase 4, §15, §19)
+
+- **Seasons & Legacy** (§15): a season ends on any victory or on timeout; the
+  ceremony awards Legacy points and titles, then a **soft restart** spins up a
+  fresh galaxy that carries Legacy forward as a capped **±5% head start** —
+  solving the browser-MMO problems of a stagnant world and unreachable veterans.
+- **Honest-F2P monetization** (§19): an entitlement catalog restricted to
+  quality-of-life, cosmetics and a season pass, guarded by `auditCatalog` — a
+  machine-checkable invariant (tested) that forbids pay-to-win.
+- **Spectator / mobile snapshot** (§10.11, §17): a compact public view of
+  standings, the Senate, prices and the victor, excluding fog-of-war secrets.
+- **Balance autobattler in CI** (§18.6): `.github/workflows/ci.yml` runs
+  typecheck, tests, and a headless balance smoke on every push; combat RPS
+  invariants (e.g. point-defense hard-counters missiles) are locked by tests.
+
 ### Run the world simulator
 
 ```bash
@@ -144,7 +159,7 @@ run is reproducible.
 
 ## Status
 
-Deterministic simulation cores are built and tested (**72 tests**):
+All five roadmap phases of simulation are built and tested (**84 tests**, CI-guarded):
 
 - **Phase 0 — world/economy tick** (`world-core`).
 - **Phase 1 — tactical combat engine** (`combat-core`).
@@ -152,8 +167,10 @@ Deterministic simulation cores are built and tested (**72 tests**):
   newbie protection).
 - **Phase 3 — politics & PvE** (Galactic Senate & elections, the Ancients &
   raids, archaeology/artifacts, Gate expeditions, admirals, ground invasions,
-  and the four season-victory paths).
+  the four season-victory paths).
+- **Phase 4 — polish** (seasons + Legacy soft restart, honest-F2P monetization
+  invariant, spectator/mobile snapshot, balance autobattler in CI).
 
-Still to come: the client/UI and networking/server, plus connecting the world's
-fleets into the tactical combat engine (replacing the Phase-0 auto-battle) and
-Phase-4 polish (seasons + legacy, spectator mode, mobile).
+Still to come: the **client/UI** (React + PixiJS: galaxy map, ship builder,
+doctrine editor) and **networking/server**, plus connecting the world's fleets
+into the tactical combat engine (replacing the Phase-0 auto-battle).

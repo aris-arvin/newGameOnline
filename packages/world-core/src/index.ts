@@ -23,4 +23,7 @@ export * from './ancients.js';
 export * from './expeditions.js';
 export * from './invasion.js';
 export * from './victory.js';
+export * from './seasons.js';
+export * from './monetization.js';
+export * from './spectate.js';
 export * from './world.js';

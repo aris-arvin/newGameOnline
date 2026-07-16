@@ -111,5 +111,11 @@
     "economicSharePct": 40,
     "economicHoldTicks": 30,
     "economicMinVolume": 8000
+  },
+  "season": {
+    "lengthTicks": 240,
+    "championLegacy": 200,
+    "maxLegacyBonusPct": 5,
+    "legacyPerBonusPct": 120
   }
 }

@@ -148,6 +148,12 @@ export interface Empire {
   admiralIds: string[];
   /** In-progress Gate expedition, if any (§13). */
   expeditionRun?: { stage: number; progress: number };
+  // --- Phase 4 (seasons & legacy, §15) ---
+  /** Permanent account progress carried across seasons (§15). */
+  legacy: number;
+  titles: string[];
+  /** Capped ±5% head-start bonus derived from legacy. */
+  legacyBonusPct: number;
 }
 
 export type ShipRole = 'warship' | 'colony' | 'miner' | 'troops';
@@ -204,6 +210,17 @@ export interface WorldState {
   victor: Victor | null;
   /** Consecutive-tick counters toward the sustained victory conditions (§15). */
   holds: { military: Record<string, number>; economic: Record<string, number> };
+  season: SeasonState;
+}
+
+// --- Seasons (§15) --------------------------------------------------------
+
+export interface SeasonState {
+  number: number;
+  startTick: number;
+  status: 'active' | 'ended';
+  endedTick: number | null;
+  endReason: string;
 }
 
 // --- Senate (§11.3) -------------------------------------------------------
@@ -449,6 +466,17 @@ export interface VictoryConfig {
   economicMinVolume: number;
 }
 
+export interface SeasonConfig {
+  /** Hard length of a season in ticks (a season also ends on any victory). */
+  lengthTicks: number;
+  /** Legacy points for winning the season. */
+  championLegacy: number;
+  /** Max head-start percent legacy can grant next season (§15 caps at ~5%). */
+  maxLegacyBonusPct: number;
+  /** Legacy points required per +1% head start. */
+  legacyPerBonusPct: number;
+}
+
 export interface WorldData {
   economy: EconomyConfig;
   regionBase: Record<RegionSpec, RegionBaseDef>;
@@ -466,4 +494,5 @@ export interface WorldData {
   expeditions: ExpeditionConfig;
   admirals: AdmiralConfig;
   victory: VictoryConfig;
+  season: SeasonConfig;
 }
