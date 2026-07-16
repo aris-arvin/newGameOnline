@@ -6,8 +6,11 @@
  */
 import { Rng } from '@pure-galaxy/shared';
 import type { Fleet, Ship, WorldData, WorldEvent, WorldState } from './types.js';
+import { MATERIAL_KINDS, RESOURCE_GROUPS } from './types.js';
 import { laneDistance } from './galaxy.js';
 import { createColony } from './colony.js';
+import { areHostile } from './diplomacy.js';
+import { isProtected } from './protection.js';
 
 export function fleetPower(fleet: Fleet): number {
   let p = 0;
@@ -57,12 +60,23 @@ export function fleetStep(world: WorldState, data: WorldData, rng: Rng): WorldEv
     }
   }
 
-  resolveBattles(world, rng, events);
+  resolveBattles(world, data, rng, events);
   return events;
 }
 
 function resolveArrival(world: WorldState, fleet: Fleet, events: WorldEvent[]): void {
   const order = fleet.order;
+  if (order && order.type === 'convoy' && fleet.cargo) {
+    // Cargo reached its destination hub: deposit into the owner's treasury.
+    const empire = world.empires[fleet.empireId];
+    if (empire) {
+      for (const k of [...RESOURCE_GROUPS, ...MATERIAL_KINDS]) empire.treasury[k] += fleet.cargo[k];
+      events.push({ time: world.time, kind: 'convoy', text: `${empire.name} convoy delivered cargo` });
+    }
+    fleet.cargo = undefined;
+    fleet.order = undefined;
+    return;
+  }
   if (order && order.type === 'colonize' && order.targetPlanetId) {
     const planet = world.galaxy.planets[order.targetPlanetId];
     const already = Object.values(world.colonies).some((c) => c.planetId === order.targetPlanetId);
@@ -83,7 +97,7 @@ function resolveArrival(world: WorldState, fleet: Fleet, events: WorldEvent[]): 
   if (fleet.order) fleet.order = undefined;
 }
 
-function resolveBattles(world: WorldState, rng: Rng, events: WorldEvent[]): void {
+function resolveBattles(world: WorldState, data: WorldData, rng: Rng, events: WorldEvent[]): void {
   const bySystem: Record<string, Fleet[]> = {};
   for (const id of Object.keys(world.fleets).sort()) {
     const f = world.fleets[id];
@@ -91,9 +105,24 @@ function resolveBattles(world: WorldState, rng: Rng, events: WorldEvent[]): void
   }
   for (const sysId of Object.keys(bySystem).sort()) {
     const fleets = bySystem[sysId];
-    const empires = [...new Set(fleets.map((f) => f.empireId))];
+    const empires = [...new Set(fleets.map((f) => f.empireId))].sort();
     if (empires.length < 2) continue;
-    resolveSystemBattle(world, fleets, rng, events);
+
+    // A battle needs two mutually hostile empires, neither under newbie
+    // protection (§14.1) and not bound by a peace treaty (§11.1).
+    const active = new Set<string>();
+    for (let i = 0; i < empires.length; i++) {
+      for (let j = i + 1; j < empires.length; j++) {
+        const a = empires[i];
+        const b = empires[j];
+        if (!areHostile(world, a, b)) continue;
+        if (isProtected(world, world.empires[a], data) || isProtected(world, world.empires[b], data)) continue;
+        active.add(a);
+        active.add(b);
+      }
+    }
+    if (active.size < 2) continue;
+    resolveSystemBattle(world, fleets.filter((f) => active.has(f.empireId)), rng, events);
   }
 }
 

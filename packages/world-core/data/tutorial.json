@@ -1,0 +1,14 @@
+{
+  "id": "onboarding",
+  "title": "First Steps in PURE GALAXY",
+  "note": "Client-facing content (§17). Steps are checked off by game events; the world sim exposes those events, the client renders the tutorial.",
+  "steps": [
+    { "id": "survey_home", "title": "Survey your homeworld", "text": "Open your capital and inspect its regions. Each district has a specialization and level.", "trigger": "open_colony" },
+    { "id": "queue_build", "title": "Develop a district", "text": "Queue a district upgrade. Construction runs on your industry output even while you are away.", "trigger": "build_queued" },
+    { "id": "first_tech", "title": "Pick a research focus", "text": "Set your science sliders. Crossing a milestone unlocks an empire-wide bonus.", "trigger": "tech_unlocked" },
+    { "id": "found_colony", "title": "Colonize a neighbour", "text": "Send a colony ship to a habitable planet in a nearby system.", "trigger": "colonized" },
+    { "id": "sign_treaty", "title": "Make a friend", "text": "Sign a non-aggression pact so a stronger neighbour will not raid you.", "trigger": "treaty_signed" },
+    { "id": "trade", "title": "Sell your surplus", "text": "Ship surplus materials to your treasury and sell them on the Federation market for credits.", "trigger": "market_trade" },
+    { "id": "first_battle", "title": "Defend your space", "text": "Newbie protection shields you early on. When it lifts, keep a fleet ready.", "trigger": "protection_lifted" }
+  ]
+}

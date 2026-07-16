@@ -93,6 +93,24 @@ economic tick**). Deterministic, integer-only, no filesystem in the core:
 - **Fleets** with hyperlane travel, **colonization**, and a Phase-0 **non-tactical
   auto-battle** (§20) — distinct from the tactical engine in `combat-core`.
 
+### The society layer (Phase 2, §11–§16)
+
+`world-core` also carries the Phase-2 "Общество" systems, all wired into the
+same deterministic tick:
+
+- **Diplomacy** (§11): eight treaty types, relations, gradual AI diplomacy;
+  allied empires don't auto-battle and `research_exchange` speeds research (a
+  bonus, not full tech sharing — the SF imbalance fix).
+- **Market** (§16): colonies ship surplus to an empire treasury; a pure bid/ask
+  **matching engine** plus a "Federation" NPC market-maker set prices that drift
+  with supply. Production asymmetry between races creates real trade.
+- **Convoys & piracy** (§5.4, §14.4): cargo convoys between colonies; a pirate
+  faction hunts unprotected convoys.
+- **Espionage** (§12): agents run recon / sabotage / steal-tech missions against
+  counter-intelligence.
+- **Newbie protection** (§14.1): young/weak empires are shielded from attack and
+  piracy until they cross a rating or the grace period ends.
+
 ### Run the world simulator
 
 ```bash
@@ -105,7 +123,13 @@ reproducible.
 
 ## Status
 
-Two deterministic simulation cores are built and tested (45 tests): the Phase-0
-world/economy tick and the Phase-1 tactical combat engine. Still to come: the
-client/UI, networking/server, and the higher-phase systems in `GAME_PROMPT.md`
-(alliances, Senate, espionage, seasons).
+Deterministic simulation cores are built and tested (**60 tests**):
+
+- **Phase 0 — world/economy tick** (`world-core`).
+- **Phase 1 — tactical combat engine** (`combat-core`).
+- **Phase 2 — society layer** (diplomacy, market, convoys/piracy, espionage,
+  newbie protection) integrated into the world tick.
+
+Still to come: the client/UI, networking/server, and the higher-phase systems in
+`GAME_PROMPT.md` (Galactic Senate, the Ancients/PvE, seasons & victory, ground
+invasions), plus connecting the world's fleets into the tactical engine.

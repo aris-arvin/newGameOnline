@@ -55,5 +55,23 @@
     { "id": "phys_fusion", "name": "Fusion Refinement", "school": "physics", "threshold": 320, "effect": "+15% industry", "bonus": { "industry": 15 } },
     { "id": "econ_trade", "name": "Trade Networks", "school": "economics", "threshold": 100, "effect": "+20% trade", "bonus": { "trade": 20 } },
     { "id": "econ_agri", "name": "Agri-Science", "school": "economics", "threshold": 320, "effect": "+15% farming", "bonus": { "farm": 15 } }
-  ]
+  ],
+  "market": {
+    "basePrices": { "food": 2, "alloys": 5, "fuel": 6, "electronics": 12, "composites": 9 },
+    "spreadPct": 12,
+    "driftDivisor": 40,
+    "colonyReserve": 60,
+    "shipPct": 50,
+    "treasuryTarget": 120
+  },
+  "espionage": {
+    "agentCost": 60,
+    "missionTicks": 4,
+    "baseSuccess": 55,
+    "sabotageLoss": 40
+  },
+  "protection": {
+    "ratingThreshold": 900,
+    "graceTicks": 40
+  }
 }

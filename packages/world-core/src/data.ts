@@ -13,6 +13,25 @@ export function loadWorldData(): WorldData {
   return JSON.parse(readFileSync(path.join(DATA_DIR, 'world-data.json'), 'utf8')) as WorldData;
 }
 
+export interface TutorialStep {
+  id: string;
+  title: string;
+  text: string;
+  trigger: string;
+}
+
+export interface Tutorial {
+  id: string;
+  title: string;
+  note: string;
+  steps: TutorialStep[];
+}
+
+/** Client-facing onboarding content (§17); the sim emits the trigger events. */
+export function loadTutorial(): Tutorial {
+  return JSON.parse(readFileSync(path.join(DATA_DIR, 'tutorial.json'), 'utf8')) as Tutorial;
+}
+
 export function raceById(data: WorldData, id: string): RaceDef {
   const r = data.races.find((x) => x.id === id);
   if (!r) throw new Error(`Unknown race: ${id}`);

@@ -120,6 +120,16 @@ export interface Empire {
   colonyIds: string[];
   fleetIds: string[];
   isNpc: boolean;
+  /** Empire-level tradable goods pool fed by colonies (§16 logistics). */
+  treasury: Stock;
+  /** Tick this empire was founded, for newbie protection (§14.1). */
+  foundedTick: number;
+  /** Relations toward other empires, -100..100 (§11). */
+  relations: Record<string, number>;
+  /** Counter-intelligence strength vs enemy agents (§12). */
+  counterIntel: number;
+  /** True for the roaming pirate faction (§14.4). */
+  pirate: boolean;
 }
 
 export type ShipRole = 'warship' | 'colony' | 'miner';
@@ -130,7 +140,7 @@ export interface Ship {
 }
 
 export interface FleetOrder {
-  type: 'move' | 'colonize';
+  type: 'move' | 'colonize' | 'convoy';
   /** Remaining systems to traverse (in order); path[last] is the destination. */
   path: string[];
   /** Progress along the lane toward path[0]. */
@@ -144,6 +154,8 @@ export interface Fleet {
   systemId: string;
   ships: Ship[];
   order?: FleetOrder;
+  /** Cargo carried by a convoy (§5.4); undefined for a normal fleet. */
+  cargo?: Stock;
 }
 
 // --- World ----------------------------------------------------------------
@@ -163,6 +175,73 @@ export interface WorldState {
   fleets: Record<string, Fleet>;
   nextId: number;
   log: WorldEvent[];
+  // --- Society layer (Phase 2, §11-§16) ---
+  treaties: Treaty[];
+  market: MarketState;
+  agents: Record<string, Agent>;
+}
+
+// --- Diplomacy (§11) ------------------------------------------------------
+
+export type TreatyType =
+  | 'nonaggression'
+  | 'trade'
+  | 'research_exchange'
+  | 'hypergate'
+  | 'passage'
+  | 'defensive'
+  | 'military'
+  | 'vassal';
+
+export interface Treaty {
+  id: string;
+  a: string;
+  b: string;
+  type: TreatyType;
+  since: number;
+}
+
+// --- Market (§16) ---------------------------------------------------------
+
+export type Commodity = MaterialKind;
+
+export interface Order {
+  id: string;
+  empireId: string;
+  side: 'bid' | 'ask';
+  commodity: Commodity;
+  price: number;
+  qty: number;
+  time: number;
+}
+
+export interface Trade {
+  commodity: Commodity;
+  price: number;
+  qty: number;
+  buyer: string;
+  seller: string;
+}
+
+export interface MarketState {
+  /** Current NPC reference price per commodity. */
+  prices: Record<Commodity, number>;
+  orders: Order[];
+  lastTrades: Trade[];
+}
+
+// --- Espionage (§12) ------------------------------------------------------
+
+export type MissionKind = 'recon' | 'sabotage' | 'steal_tech';
+
+export interface Agent {
+  id: string;
+  empireId: string;
+  level: number;
+  targetEmpireId?: string;
+  mission?: MissionKind;
+  progress: number;
+  cooldown: number;
 }
 
 // --- Config (data/world-data.json) ---------------------------------------
@@ -239,6 +318,32 @@ export interface RegionBaseDef {
   defense?: number;
 }
 
+export interface MarketConfig {
+  basePrices: Record<Commodity, number>;
+  /** NPC buy/sell spread, integer percent. */
+  spreadPct: number;
+  /** How strongly net supply moves the price (larger = slower). */
+  driftDivisor: number;
+  /** Materials each colony keeps before shipping surplus to the treasury. */
+  colonyReserve: number;
+  /** Fraction (percent) of surplus shipped to the treasury per tick. */
+  shipPct: number;
+  /** Treasury target the empire holds before auto-selling to the NPC market. */
+  treasuryTarget: number;
+}
+
+export interface EspionageConfig {
+  agentCost: number;
+  missionTicks: number;
+  baseSuccess: number;
+  sabotageLoss: number;
+}
+
+export interface ProtectionConfig {
+  ratingThreshold: number;
+  graceTicks: number;
+}
+
 export interface WorldData {
   economy: EconomyConfig;
   regionBase: Record<RegionSpec, RegionBaseDef>;
@@ -247,4 +352,7 @@ export interface WorldData {
   races: RaceDef[];
   recipes: Recipe[];
   techs: TechDef[];
+  market: MarketConfig;
+  espionage: EspionageConfig;
+  protection: ProtectionConfig;
 }

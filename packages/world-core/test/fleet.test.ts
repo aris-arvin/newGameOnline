@@ -51,6 +51,9 @@ describe('fleet travel & colonization', () => {
 describe('non-tactical auto-battle (§20)', () => {
   it('the stronger fleet wins and the weaker is destroyed', () => {
     const w = fresh(5);
+    // Opt both empires out of newbie protection so the engagement resolves.
+    w.empires['emp0'].foundedTick = -100;
+    w.empires['emp1'].foundedTick = -100;
     const sys = w.galaxy.planets[w.colonies[w.empires['emp0'].colonyIds[0]].planetId].systemId;
     const strong = createFleet(w, 'emp0', sys, [
       { role: 'warship', power: 60 },

@@ -9,12 +9,17 @@ import { Rng, hashValue } from '@pure-galaxy/shared';
 import type { Empire, WorldData, WorldState } from './types.js';
 import { SCHOOLS } from './types.js';
 import { generateGalaxy, DEFAULT_GALAXY, type GalaxyGenConfig } from './galaxy.js';
-import { createHomeColony, habitability } from './colony.js';
+import { createHomeColony, habitability, makeStock } from './colony.js';
 import { raceById } from './data.js';
 import { governorStep } from './governor.js';
 import { economyStep } from './economy.js';
 import { accrueResearch, checkTechUnlocks } from './science.js';
 import { fleetStep } from './fleet.js';
+import { diplomacyStep, researchExchangeBonus } from './diplomacy.js';
+import { logisticsStep, marketStep, makeMarket } from './market.js';
+import { espionageStep } from './espionage.js';
+import { piracyStep } from './piracy.js';
+import { protectionStep } from './protection.js';
 
 export interface CreateWorldOptions {
   races?: string[];
@@ -38,6 +43,9 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
     fleets: {},
     nextId: 1,
     log: [],
+    treaties: [],
+    market: makeMarket(data),
+    agents: {},
   };
 
   const usedPlanets = new Set<string>();
@@ -74,6 +82,11 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
       colonyIds: [],
       fleetIds: [],
       isNpc: false,
+      treasury: makeStock(),
+      foundedTick: 0,
+      relations: {},
+      counterIntel: 0,
+      pirate: false,
     };
     world.empires[empireId] = empire;
 
@@ -106,7 +119,9 @@ export function tick(world: WorldState, data: WorldData): WorldState {
       for (const e of res.events) world.log.push(e);
     }
 
-    accrueResearch(empire, researchGain, data);
+    // Research-exchange treaties speed research (a bonus, not full sharing, §11.2).
+    const bonus = researchExchangeBonus(world, empireId);
+    accrueResearch(empire, Math.floor((researchGain * (100 + bonus)) / 100), data);
     const unlocked = checkTechUnlocks(empire, data);
     for (const techId of unlocked) {
       const tech = data.techs.find((t) => t.id === techId);
@@ -116,7 +131,14 @@ export function tick(world: WorldState, data: WorldData): WorldState {
     empire.focus = Math.min(data.economy.focusCap, empire.focus + data.economy.focusRegen);
   }
 
-  for (const e of fleetStep(world, data, rng)) world.log.push(e);
+  // --- Society layer (Phase 2) -----------------------------------------
+  logisticsStep(world, data);
+  marketStep(world, data);
+  diplomacyStep(world, data, rng.fork(1));
+  espionageStep(world, data, rng.fork(2));
+  piracyStep(world, data, rng.fork(3));
+  for (const e of fleetStep(world, data, rng.fork(4))) world.log.push(e);
+  protectionStep(world, data);
 
   world.time += 1;
   if (world.log.length > LOG_CAP) world.log = world.log.slice(-LOG_CAP);
@@ -144,6 +166,8 @@ export function worldHash(world: WorldState): string {
           techs: [...e.unlockedTechs].sort(),
           colonies: e.colonyIds.length,
           fleets: e.fleetIds.length,
+          treasury: e.treasury,
+          relations: e.relations,
         };
       }),
     colonies: Object.keys(world.colonies)
@@ -168,7 +192,18 @@ export function worldHash(world: WorldState): string {
           sys: f.systemId,
           ships: f.ships.map((s) => [s.role, s.power]),
           order: f.order ? { type: f.order.type, path: f.order.path, leg: f.order.legProgress } : null,
+          cargo: f.cargo ?? null,
         };
+      }),
+    treaties: [...world.treaties]
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .map((t) => [t.a, t.b, t.type]),
+    prices: world.market.prices,
+    agents: Object.keys(world.agents)
+      .sort()
+      .map((id) => {
+        const a = world.agents[id];
+        return { id, e: a.empireId, t: a.targetEmpireId ?? '', m: a.mission ?? '', p: a.progress, cd: a.cooldown, lvl: a.level };
       }),
   };
   return hashValue(projection);
