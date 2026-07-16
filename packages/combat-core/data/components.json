@@ -1,0 +1,37 @@
+[
+  { "id": "reactor_s", "name": "Fusion Core I", "kind": "reactor", "mass": 20, "power": 60 },
+  { "id": "reactor_m", "name": "Fusion Core II", "kind": "reactor", "mass": 45, "power": 140 },
+  { "id": "reactor_l", "name": "Fusion Core III", "kind": "reactor", "mass": 90, "power": 300 },
+
+  { "id": "engine_s", "name": "Ion Drive I", "kind": "engine", "mass": 12, "power": -15, "thrust": 24 },
+  { "id": "engine_m", "name": "Ion Drive II", "kind": "engine", "mass": 26, "power": -32, "thrust": 55 },
+  { "id": "engine_l", "name": "Ion Drive III", "kind": "engine", "mass": 55, "power": -64, "thrust": 110 },
+
+  { "id": "shield_s", "name": "Deflector I", "kind": "shield", "mass": 18, "power": -20, "capacity": 80, "regen": 4 },
+  { "id": "shield_m", "name": "Deflector II", "kind": "shield", "mass": 34, "power": -40, "capacity": 160, "regen": 8 },
+  { "id": "shield_l", "name": "Deflector III", "kind": "shield", "mass": 66, "power": -80, "capacity": 320, "regen": 14 },
+
+  { "id": "armor_plate_s", "name": "Plated Hull I", "kind": "armor", "mass": 24, "power": 0, "armorType": "plated", "hp": 120, "absorb": 6 },
+  { "id": "armor_plate_m", "name": "Plated Hull II", "kind": "armor", "mass": 46, "power": 0, "armorType": "plated", "hp": 240, "absorb": 8 },
+  { "id": "armor_ablative_m", "name": "Ablative Layer II", "kind": "armor", "mass": 40, "power": 0, "armorType": "ablative", "hp": 200, "absorb": 5 },
+  { "id": "armor_composite_m", "name": "Composite Weave II", "kind": "armor", "mass": 50, "power": 0, "armorType": "composite", "hp": 220, "absorb": 10 },
+
+  { "id": "railgun_s", "name": "Railgun I", "kind": "weapon", "mass": 16, "power": -18, "weaponType": "kinetic", "damage": 26, "optimalRange": 6, "maxRange": 12, "accuracy": 78, "heat": 10, "shots": 1, "mounts": ["nose", "side"] },
+  { "id": "railgun_m", "name": "Railgun II", "kind": "weapon", "mass": 30, "power": -34, "weaponType": "kinetic", "damage": 48, "optimalRange": 7, "maxRange": 14, "accuracy": 74, "heat": 16, "shots": 1, "mounts": ["nose", "side"] },
+  { "id": "autocannon", "name": "Autocannon", "kind": "weapon", "mass": 12, "power": -14, "weaponType": "kinetic", "damage": 14, "optimalRange": 4, "maxRange": 8, "accuracy": 82, "heat": 6, "shots": 2, "mounts": ["nose", "side", "rear"] },
+
+  { "id": "laser_s", "name": "Laser I", "kind": "weapon", "mass": 14, "power": -16, "weaponType": "beam", "damage": 26, "optimalRange": 5, "maxRange": 12, "accuracy": 90, "heat": 8, "shots": 1, "mounts": ["nose", "side"] },
+  { "id": "laser_m", "name": "Laser II", "kind": "weapon", "mass": 28, "power": -30, "weaponType": "beam", "damage": 46, "optimalRange": 6, "maxRange": 14, "accuracy": 88, "heat": 14, "shots": 1, "mounts": ["nose", "side"] },
+  { "id": "plasma", "name": "Plasma Lance", "kind": "weapon", "mass": 22, "power": -24, "weaponType": "beam", "damage": 30, "optimalRange": 4, "maxRange": 9, "accuracy": 86, "heat": 12, "shots": 1, "mounts": ["nose", "side", "rear"] },
+
+  { "id": "missile_s", "name": "Missile Pod", "kind": "weapon", "mass": 16, "power": -12, "weaponType": "missile", "damage": 34, "optimalRange": 10, "maxRange": 18, "accuracy": 92, "heat": 6, "shots": 1, "ammo": 12, "mounts": ["nose", "side", "internal"] },
+  { "id": "torpedo", "name": "Heavy Torpedo", "kind": "weapon", "mass": 34, "power": -26, "weaponType": "missile", "damage": 70, "optimalRange": 12, "maxRange": 20, "accuracy": 90, "heat": 10, "shots": 1, "ammo": 6, "mounts": ["nose", "internal"] },
+  { "id": "missile_rack", "name": "Missile Rack", "kind": "weapon", "mass": 24, "power": -18, "weaponType": "missile", "damage": 22, "optimalRange": 9, "maxRange": 16, "accuracy": 90, "heat": 8, "shots": 2, "ammo": 8, "mounts": ["side", "internal"] },
+
+  { "id": "pd_s", "name": "Point-Defense I", "kind": "pd", "mass": 10, "power": -10, "intercept": 30 },
+  { "id": "pd_m", "name": "Point-Defense II", "kind": "pd", "mass": 18, "power": -18, "intercept": 55 },
+
+  { "id": "sensor_s", "name": "Sensor Array I", "kind": "sensor", "mass": 8, "power": -6, "sensors": 6, "cloak": 0 },
+  { "id": "sensor_m", "name": "Sensor Array II", "kind": "sensor", "mass": 14, "power": -10, "sensors": 12, "cloak": 0 },
+  { "id": "cloak_s", "name": "Cloak Field", "kind": "sensor", "mass": 16, "power": -14, "sensors": 0, "cloak": 20 }
+]

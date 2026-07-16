@@ -1,0 +1,13 @@
+{
+  "name": "pure-galaxy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PURE GALAXY — browser 4X MMO. Monorepo root.",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "autobattle": "pnpm --filter @pure-galaxy/combat-core run autobattle",
+    "meta": "pnpm --filter @pure-galaxy/combat-core run meta"
+  }
+}

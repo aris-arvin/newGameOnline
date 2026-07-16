@@ -1,0 +1,80 @@
+[
+  {
+    "id": "hull_corvette",
+    "name": "Corvette",
+    "class": "corvette",
+    "mass": 60,
+    "structure": 130,
+    "slots": { "nose": 1, "side": 2, "rear": 1, "internal": 2 },
+    "crew": 20,
+    "baseSensors": 24,
+    "baseSignature": 18,
+    "heatCapacity": 60,
+    "heatDissipation": 8
+  },
+  {
+    "id": "hull_frigate",
+    "name": "Frigate",
+    "class": "frigate",
+    "mass": 110,
+    "structure": 240,
+    "slots": { "nose": 2, "side": 2, "rear": 1, "internal": 3 },
+    "crew": 40,
+    "baseSensors": 24,
+    "baseSignature": 26,
+    "heatCapacity": 90,
+    "heatDissipation": 9
+  },
+  {
+    "id": "hull_destroyer",
+    "name": "Destroyer",
+    "class": "destroyer",
+    "mass": 180,
+    "structure": 380,
+    "slots": { "nose": 2, "side": 3, "rear": 2, "internal": 3 },
+    "crew": 70,
+    "baseSensors": 26,
+    "baseSignature": 34,
+    "heatCapacity": 110,
+    "heatDissipation": 10
+  },
+  {
+    "id": "hull_cruiser",
+    "name": "Cruiser",
+    "class": "cruiser",
+    "mass": 300,
+    "structure": 640,
+    "slots": { "nose": 2, "side": 4, "rear": 2, "internal": 4 },
+    "crew": 130,
+    "baseSensors": 28,
+    "baseSignature": 44,
+    "heatCapacity": 150,
+    "heatDissipation": 11
+  },
+  {
+    "id": "hull_battleship",
+    "name": "Battleship",
+    "class": "battleship",
+    "mass": 520,
+    "structure": 1150,
+    "slots": { "nose": 3, "side": 5, "rear": 2, "internal": 5 },
+    "crew": 240,
+    "baseSensors": 30,
+    "baseSignature": 60,
+    "heatCapacity": 210,
+    "heatDissipation": 13
+  },
+  {
+    "id": "hull_carrier",
+    "name": "Carrier",
+    "class": "carrier",
+    "mass": 460,
+    "structure": 900,
+    "slots": { "nose": 1, "side": 3, "rear": 2, "internal": 6 },
+    "crew": 200,
+    "baseSensors": 34,
+    "baseSignature": 56,
+    "heatCapacity": 180,
+    "heatDissipation": 12
+  }
+]

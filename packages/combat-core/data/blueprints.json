@@ -1,0 +1,101 @@
+[
+  {
+    "id": "bp_kinetic_frigate",
+    "name": "Rasp-class Gun Frigate",
+    "hullId": "hull_frigate",
+    "race": "Рептилоиды",
+    "components": [
+      { "defId": "railgun_m", "mount": "nose" },
+      { "defId": "railgun_s", "mount": "nose" },
+      { "defId": "engine_m", "mount": "side" },
+      { "defId": "engine_m", "mount": "side" },
+      { "defId": "armor_plate_s", "mount": "rear" },
+      { "defId": "reactor_m", "mount": "internal" },
+      { "defId": "armor_plate_m", "mount": "internal" },
+      { "defId": "shield_s", "mount": "internal" }
+    ]
+  },
+  {
+    "id": "bp_beam_frigate",
+    "name": "Prism-class Beam Frigate",
+    "hullId": "hull_frigate",
+    "race": "Герберы",
+    "components": [
+      { "defId": "laser_m", "mount": "nose" },
+      { "defId": "laser_s", "mount": "nose" },
+      { "defId": "engine_m", "mount": "side" },
+      { "defId": "engine_m", "mount": "side" },
+      { "defId": "shield_s", "mount": "rear" },
+      { "defId": "reactor_l", "mount": "internal" },
+      { "defId": "shield_m", "mount": "internal" },
+      { "defId": "sensor_s", "mount": "internal" }
+    ]
+  },
+  {
+    "id": "bp_missile_destroyer",
+    "name": "Tide-class Missile Destroyer",
+    "hullId": "hull_destroyer",
+    "race": "Ктулху",
+    "components": [
+      { "defId": "torpedo", "mount": "nose" },
+      { "defId": "missile_s", "mount": "nose" },
+      { "defId": "missile_rack", "mount": "side" },
+      { "defId": "missile_s", "mount": "side" },
+      { "defId": "engine_l", "mount": "side" },
+      { "defId": "engine_l", "mount": "rear" },
+      { "defId": "pd_s", "mount": "rear" },
+      { "defId": "reactor_l", "mount": "internal" },
+      { "defId": "sensor_m", "mount": "internal" },
+      { "defId": "shield_s", "mount": "internal" }
+    ]
+  },
+  {
+    "id": "bp_pd_escort",
+    "name": "Aegis-class Escort",
+    "hullId": "hull_frigate",
+    "race": "Солы",
+    "components": [
+      { "defId": "autocannon", "mount": "nose" },
+      { "defId": "autocannon", "mount": "side" },
+      { "defId": "pd_m", "mount": "side" },
+      { "defId": "pd_m", "mount": "rear" },
+      { "defId": "reactor_m", "mount": "internal" },
+      { "defId": "engine_m", "mount": "internal" },
+      { "defId": "engine_m", "mount": "internal" }
+    ]
+  },
+  {
+    "id": "bp_cruiser_flagship",
+    "name": "Sovereign-class Cruiser",
+    "hullId": "hull_cruiser",
+    "race": "Солы",
+    "components": [
+      { "defId": "railgun_m", "mount": "nose" },
+      { "defId": "laser_m", "mount": "nose" },
+      { "defId": "railgun_m", "mount": "side" },
+      { "defId": "laser_m", "mount": "side" },
+      { "defId": "engine_l", "mount": "side" },
+      { "defId": "engine_l", "mount": "side" },
+      { "defId": "pd_m", "mount": "rear" },
+      { "defId": "armor_plate_m", "mount": "rear" },
+      { "defId": "reactor_l", "mount": "internal" },
+      { "defId": "reactor_m", "mount": "internal" },
+      { "defId": "shield_l", "mount": "internal" },
+      { "defId": "armor_plate_m", "mount": "internal" }
+    ]
+  },
+  {
+    "id": "bp_sol_corvette",
+    "name": "Spark-class Corvette",
+    "hullId": "hull_corvette",
+    "race": "Солы",
+    "components": [
+      { "defId": "railgun_s", "mount": "nose" },
+      { "defId": "laser_s", "mount": "side" },
+      { "defId": "engine_m", "mount": "side" },
+      { "defId": "engine_m", "mount": "rear" },
+      { "defId": "reactor_m", "mount": "internal" },
+      { "defId": "shield_s", "mount": "internal" }
+    ]
+  }
+]
