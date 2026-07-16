@@ -15,8 +15,12 @@ The full design brief is [`GAME_PROMPT.md`](./GAME_PROMPT.md).
 GAME_PROMPT.md              The complete design document (RU).
 packages/shared/            Deterministic primitives shared by all sims (PRNG, stable hashing).
 packages/combat-core/       Deterministic tactical WEGO combat engine (Phase 1, §21.2).
-packages/world-core/        Deterministic world simulation: galaxy, colonies, economy tick (Phase 0, §20).
+packages/world-core/        Deterministic world simulation: galaxy, economy, society,
+                            politics, seasons — and the world<->combat bridge (Phases 0-4).
 ```
+
+`world-core` depends on `combat-core`: when hostile fleets meet, the engagement
+is fought by the tactical engine (the "сшивка"), not an abstract roll.
 
 Development follows the roadmap in `GAME_PROMPT.md` §20. Two vertical slices exist:
 
@@ -146,10 +150,21 @@ The same tick also runs the Phase-3 systems:
   typecheck, tests, and a headless balance smoke on every push; combat RPS
   invariants (e.g. point-defense hard-counters missiles) are locked by tests.
 
+### World ↔ combat bridge (the "сшивка")
+
+When hostile fleets share a system, `world-core` hands the engagement to the
+`combat-core` tactical engine instead of a power roll: each world ship is mapped
+to a combat blueprint (by size tier, role, and any assigned admiral → flagship),
+a deterministic WEGO battle is fought, and the **per-ship casualties are written
+back** — so both sides can take real, uneven losses. Oversized battles fall back
+to the quick aggregate resolve. It's injected as a `BattleResolver`, keeping the
+world core decoupled from combat. The `worldsim` CLI prints a staged skirmish
+demonstrating it.
+
 ### Run the world simulator
 
 ```bash
-pnpm --filter @pure-galaxy/world-core run worldsim -- --seed 7 --ticks 48 --every 12
+pnpm --filter @pure-galaxy/world-core run worldsim -- --seed 7 --ticks 200 --every 50
 ```
 
 Generates a galaxy, seeds four empires (Солы / Рептилоиды / Тумали / Герберы)
@@ -159,7 +174,8 @@ run is reproducible.
 
 ## Status
 
-All five roadmap phases of simulation are built and tested (**84 tests**, CI-guarded):
+All five roadmap phases of simulation are built and tested (**87 tests**, CI-guarded),
+and the two engines are joined by the world↔combat bridge:
 
 - **Phase 0 — world/economy tick** (`world-core`).
 - **Phase 1 — tactical combat engine** (`combat-core`).
@@ -171,6 +187,6 @@ All five roadmap phases of simulation are built and tested (**84 tests**, CI-gua
 - **Phase 4 — polish** (seasons + Legacy soft restart, honest-F2P monetization
   invariant, spectator/mobile snapshot, balance autobattler in CI).
 
-Still to come: the **client/UI** (React + PixiJS: galaxy map, ship builder,
-doctrine editor) and **networking/server**, plus connecting the world's fleets
-into the tactical combat engine (replacing the Phase-0 auto-battle).
+The world's fleet battles are now resolved by the tactical engine via the
+bridge. Still to come: the **client/UI** (React + PixiJS: galaxy map, ship
+builder, doctrine editor, battle replays) and **networking/server**.

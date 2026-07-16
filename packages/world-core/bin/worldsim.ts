@@ -156,6 +156,22 @@ function main(): void {
   // Compact spectator/mobile snapshot of the new season's opening state.
   const snap = spectateSnapshot(next, data);
   console.log(`\nSpectator snapshot (S${snap.season}, t${snap.time}): ${snap.galaxy.systems} systems, leader ${snap.standings[0]?.empire} (rating ${snap.standings[0]?.rating}).`);
+
+  // --- World<->combat bridge (сшивка): staged fleet clash resolved tactically ---
+  // A clean 2-empire duel (no pirates/convoys) so the attrition is legible.
+  const sk = createWorld(seed + 1, data, { races: ['sol', 'reptiloid'], galaxy: { sectors: 4, systemsPerSector: 4, laneNeighbors: 3 } });
+  sk.empires['emp0'].foundedTick = -100;
+  sk.empires['emp1'].foundedTick = -100;
+  const skSys = sk.galaxy.planets[sk.colonies[sk.empires['emp0'].colonyIds[0]].planetId].systemId;
+  createFleet(sk, 'emp0', skSys, [{ role: 'warship', power: 90 }, { role: 'warship', power: 70 }, { role: 'warship', power: 40 }]);
+  createFleet(sk, 'emp1', skSys, [{ role: 'warship', power: 85 }, { role: 'warship', power: 60 }, { role: 'warship', power: 55 }]);
+  const shipsOf = (id: string): number => sk.empires[id].fleetIds.reduce((n, fid) => n + (sk.fleets[fid]?.ships.length ?? 0), 0);
+  console.log(`\n--- World<->combat bridge: staged skirmish at ${sk.galaxy.systems[skSys].name} ---`);
+  console.log(`  Before: ${sk.empires['emp0'].name} ${shipsOf('emp0')} ships vs ${sk.empires['emp1'].name} ${shipsOf('emp1')} ships`);
+  tick(sk, data);
+  const battle = sk.log.filter((e) => e.kind === 'battle').pop();
+  console.log(`  ${battle ? battle.text : '(no engagement)'}`);
+  console.log(`  After:  ${sk.empires['emp0'].name} ${shipsOf('emp0')} ships vs ${sk.empires['emp1'].name} ${shipsOf('emp1')} ships`);
   console.log('');
 }
 

@@ -26,4 +26,5 @@ export * from './victory.js';
 export * from './seasons.js';
 export * from './monetization.js';
 export * from './spectate.js';
+export * from './battle-bridge.js';
 export * from './world.js';

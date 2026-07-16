@@ -38,6 +38,9 @@ importers:
 
   packages/world-core:
     dependencies:
+      '@pure-galaxy/combat-core':
+        specifier: workspace:*
+        version: link:../combat-core
       '@pure-galaxy/shared':
         specifier: workspace:*
         version: link:../shared

@@ -15,7 +15,8 @@
     "worldsim": "tsx bin/worldsim.ts"
   },
   "dependencies": {
-    "@pure-galaxy/shared": "workspace:*"
+    "@pure-galaxy/shared": "workspace:*",
+    "@pure-galaxy/combat-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

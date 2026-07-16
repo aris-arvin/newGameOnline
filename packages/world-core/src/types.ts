@@ -161,6 +161,8 @@ export type ShipRole = 'warship' | 'colony' | 'miner' | 'troops';
 export interface Ship {
   role: ShipRole;
   power: number;
+  /** Optional combat-core blueprint id; when absent the bridge maps by power tier. */
+  design?: string;
 }
 
 export interface FleetOrder {
@@ -466,6 +468,15 @@ export interface VictoryConfig {
   economicMinVolume: number;
 }
 
+export interface CombatConfig {
+  /** Resolve system battles with the tactical combat-core engine (§ bridge). */
+  tactical: boolean;
+  /** Above this per-side ship count, fall back to the quick aggregate resolve. */
+  maxShipsPerSide: number;
+  /** combat-core blueprint ids used to represent world ships by size tier. */
+  referenceBlueprints: { corvette: string; frigate: string; destroyer: string; cruiser: string };
+}
+
 export interface SeasonConfig {
   /** Hard length of a season in ticks (a season also ends on any victory). */
   lengthTicks: number;
@@ -495,4 +506,5 @@ export interface WorldData {
   admirals: AdmiralConfig;
   victory: VictoryConfig;
   season: SeasonConfig;
+  combat: CombatConfig;
 }

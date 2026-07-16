@@ -19,6 +19,24 @@ export function fleetPower(fleet: Fleet): number {
   return p;
 }
 
+/**
+ * A battle resolver decides the fate of the (already filtered, mutually hostile)
+ * fleets sharing a system. Injected so the core stays decoupled: the default is
+ * the quick aggregate resolve; world.ts plugs in the tactical combat-core bridge.
+ */
+export type BattleResolver = (
+  world: WorldState,
+  data: WorldData,
+  fleets: Fleet[],
+  rng: Rng,
+  events: WorldEvent[],
+) => void;
+
+/** Remove a fleet from the world (and kill its admirals). Exposed for resolvers. */
+export function removeFleet(world: WorldState, fleet: Fleet): void {
+  destroyFleet(world, fleet);
+}
+
 export function createFleet(world: WorldState, empireId: string, systemId: string, ships: Ship[]): Fleet {
   const id = `fl${world.nextId++}`;
   const fleet: Fleet = { id, empireId, systemId, ships };
@@ -39,7 +57,12 @@ function ceilDiv(a: number, b: number): number {
   return b <= 0 ? 0 : Math.floor((a + b - 1) / b);
 }
 
-export function fleetStep(world: WorldState, data: WorldData, rng: Rng): WorldEvent[] {
+export function fleetStep(
+  world: WorldState,
+  data: WorldData,
+  rng: Rng,
+  resolver: BattleResolver = quickResolveSystemBattle,
+): WorldEvent[] {
   const events: WorldEvent[] = [];
   const speed = data.economy.fleetSpeed;
 
@@ -62,7 +85,7 @@ export function fleetStep(world: WorldState, data: WorldData, rng: Rng): WorldEv
     }
   }
 
-  resolveBattles(world, data, rng, events);
+  resolveBattles(world, data, rng, events, resolver);
   return events;
 }
 
@@ -99,7 +122,7 @@ function resolveArrival(world: WorldState, fleet: Fleet, events: WorldEvent[]): 
   if (fleet.order) fleet.order = undefined;
 }
 
-function resolveBattles(world: WorldState, data: WorldData, rng: Rng, events: WorldEvent[]): void {
+function resolveBattles(world: WorldState, data: WorldData, rng: Rng, events: WorldEvent[], resolver: BattleResolver): void {
   const bySystem: Record<string, Fleet[]> = {};
   for (const id of Object.keys(world.fleets).sort()) {
     const f = world.fleets[id];
@@ -124,11 +147,12 @@ function resolveBattles(world: WorldState, data: WorldData, rng: Rng, events: Wo
       }
     }
     if (active.size < 2) continue;
-    resolveSystemBattle(world, data, fleets.filter((f) => active.has(f.empireId)), rng, events);
+    resolver(world, data, fleets.filter((f) => active.has(f.empireId)), rng, events);
   }
 }
 
-function resolveSystemBattle(world: WorldState, data: WorldData, fleets: Fleet[], rng: Rng, events: WorldEvent[]): void {
+/** Quick aggregate resolution (Phase-0 non-tactical auto-battle, §20). */
+export function quickResolveSystemBattle(world: WorldState, data: WorldData, fleets: Fleet[], rng: Rng, events: WorldEvent[]): void {
   const power: Record<string, number> = {};
   for (const f of fleets) power[f.empireId] = (power[f.empireId] ?? 0) + fleetPower(f) + admiralBonus(world, f.id, data);
   const emps = Object.keys(power).sort();

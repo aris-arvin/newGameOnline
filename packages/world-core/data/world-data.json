@@ -117,5 +117,15 @@
     "championLegacy": 200,
     "maxLegacyBonusPct": 5,
     "legacyPerBonusPct": 120
+  },
+  "combat": {
+    "tactical": true,
+    "maxShipsPerSide": 40,
+    "referenceBlueprints": {
+      "corvette": "bp_sol_corvette",
+      "frigate": "bp_kinetic_frigate",
+      "destroyer": "bp_missile_destroyer",
+      "cruiser": "bp_cruiser_flagship"
+    }
   }
 }

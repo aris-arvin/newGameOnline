@@ -28,6 +28,7 @@ import { invasionStep } from './invasion.js';
 import { checkVictory } from './victory.js';
 import { recruitAdmiral, assignAdmiral, admiralForFleet } from './admiral.js';
 import { makeSeason, seasonStep, carryLegacy, nextSeasonSeed, seasonCitizens } from './seasons.js';
+import { tacticalResolve } from './battle-bridge.js';
 
 export interface CreateWorldOptions {
   races?: string[];
@@ -160,7 +161,9 @@ export function tick(world: WorldState, data: WorldData): WorldState {
   diplomacyStep(world, data, rng.fork(1));
   espionageStep(world, data, rng.fork(2));
   piracyStep(world, data, rng.fork(3));
-  for (const e of fleetStep(world, data, rng.fork(4))) world.log.push(e);
+  // Fleet movement + combat: hostile encounters are fought tactically via the
+  // combat-core bridge (the world<->combat "сшивка").
+  for (const e of fleetStep(world, data, rng.fork(4), tacticalResolve)) world.log.push(e);
   protectionStep(world, data);
 
   // --- Politics & PvE (Phase 3) ----------------------------------------
