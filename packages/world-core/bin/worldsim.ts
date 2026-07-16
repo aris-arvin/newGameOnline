@@ -10,7 +10,10 @@
 import { loadWorldData, raceById } from '../src/data.js';
 import { createWorld, tick, worldHash, startNextSeason } from '../src/world.js';
 import { spectateSnapshot } from '../src/spectate.js';
-import { createFleet } from '../src/fleet.js';
+import { createFleet, type BattleResolver } from '../src/fleet.js';
+import { nodeTacticalResolver } from '../src/node.js';
+
+const resolver: BattleResolver = nodeTacticalResolver();
 import { findPath } from '../src/galaxy.js';
 import { habitability, makeStock } from '../src/colony.js';
 import { spawnPirates, dispatchConvoy, PIRATE_EMPIRE } from '../src/piracy.js';
@@ -67,7 +70,7 @@ function stepWorld(world: WorldState, data: WorldData): void {
     emp0.treasury.alloys -= cargo.alloys;
     dispatchConvoy(world, 'emp0', emp0.colonyIds[1], emp0.colonyIds[0], cargo);
   }
-  tick(world, data);
+  tick(world, data, resolver);
 }
 
 function empireLine(world: WorldState, empireId: string, data: WorldData): string {
@@ -168,7 +171,7 @@ function main(): void {
   const shipsOf = (id: string): number => sk.empires[id].fleetIds.reduce((n, fid) => n + (sk.fleets[fid]?.ships.length ?? 0), 0);
   console.log(`\n--- World<->combat bridge: staged skirmish at ${sk.galaxy.systems[skSys].name} ---`);
   console.log(`  Before: ${sk.empires['emp0'].name} ${shipsOf('emp0')} ships vs ${sk.empires['emp1'].name} ${shipsOf('emp1')} ships`);
-  tick(sk, data);
+  tick(sk, data, resolver);
   const battle = sk.log.filter((e) => e.kind === 'battle').pop();
   console.log(`  ${battle ? battle.text : '(no engagement)'}`);
   console.log(`  After:  ${sk.empires['emp0'].name} ${shipsOf('emp0')} ships vs ${sk.empires['emp1'].name} ${shipsOf('emp1')} ships`);

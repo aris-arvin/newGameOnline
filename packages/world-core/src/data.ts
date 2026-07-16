@@ -5,8 +5,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import type { RaceDef, WorldData } from './types.js';
+import type { WorldData } from './types.js';
 import type { Entitlement } from './monetization.js';
+
+// Re-exported for node callers (tests/CLI); the pure definition lives in races.ts.
+export { raceById } from './races.js';
 
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
 
@@ -39,10 +42,4 @@ export function loadMonetization(): { note: string; entitlements: Entitlement[] 
     note: string;
     entitlements: Entitlement[];
   };
-}
-
-export function raceById(data: WorldData, id: string): RaceDef {
-  const r = data.races.find((x) => x.id === id);
-  if (!r) throw new Error(`Unknown race: ${id}`);
-  return r;
 }

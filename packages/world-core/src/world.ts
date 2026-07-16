@@ -10,11 +10,11 @@ import type { Empire, WorldData, WorldState } from './types.js';
 import { SCHOOLS } from './types.js';
 import { generateGalaxy, DEFAULT_GALAXY, type GalaxyGenConfig } from './galaxy.js';
 import { createHomeColony, habitability, makeStock } from './colony.js';
-import { raceById } from './data.js';
+import { raceById } from './races.js';
 import { governorStep } from './governor.js';
 import { economyStep } from './economy.js';
 import { accrueResearch, checkTechUnlocks } from './science.js';
-import { fleetStep } from './fleet.js';
+import { fleetStep, quickResolveSystemBattle, type BattleResolver } from './fleet.js';
 import { diplomacyStep, researchExchangeBonus } from './diplomacy.js';
 import { logisticsStep, marketStep, makeMarket } from './market.js';
 import { espionageStep } from './espionage.js';
@@ -28,7 +28,6 @@ import { invasionStep } from './invasion.js';
 import { checkVictory } from './victory.js';
 import { recruitAdmiral, assignAdmiral, admiralForFleet } from './admiral.js';
 import { makeSeason, seasonStep, carryLegacy, nextSeasonSeed, seasonCitizens } from './seasons.js';
-import { tacticalResolve } from './battle-bridge.js';
 
 export interface CreateWorldOptions {
   races?: string[];
@@ -123,7 +122,11 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
   return world;
 }
 
-export function tick(world: WorldState, data: WorldData): WorldState {
+export function tick(
+  world: WorldState,
+  data: WorldData,
+  resolver: BattleResolver = quickResolveSystemBattle,
+): WorldState {
   const rng = new Rng((world.seed + world.time * 0x9e3779b1) >>> 0);
 
   for (const empireId of Object.keys(world.empires).sort()) {
@@ -161,9 +164,9 @@ export function tick(world: WorldState, data: WorldData): WorldState {
   diplomacyStep(world, data, rng.fork(1));
   espionageStep(world, data, rng.fork(2));
   piracyStep(world, data, rng.fork(3));
-  // Fleet movement + combat: hostile encounters are fought tactically via the
-  // combat-core bridge (the world<->combat "сшивка").
-  for (const e of fleetStep(world, data, rng.fork(4), tacticalResolve)) world.log.push(e);
+  // Fleet movement + combat. The battle resolver is injected (default: quick
+  // aggregate); node/browser callers pass a tactical combat-core resolver.
+  for (const e of fleetStep(world, data, rng.fork(4), resolver)) world.log.push(e);
   protectionStep(world, data);
 
   // --- Politics & PvE (Phase 3) ----------------------------------------
@@ -208,8 +211,13 @@ function admiralAi(world: WorldState, data: WorldData, rng: Rng): void {
   }
 }
 
-export function runTicks(world: WorldState, data: WorldData, n: number): WorldState {
-  for (let i = 0; i < n; i++) tick(world, data);
+export function runTicks(
+  world: WorldState,
+  data: WorldData,
+  n: number,
+  resolver: BattleResolver = quickResolveSystemBattle,
+): WorldState {
+  for (let i = 0; i < n; i++) tick(world, data, resolver);
   return world;
 }
 

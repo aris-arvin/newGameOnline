@@ -5,7 +5,7 @@
  * that aggregates race modifiers + unlocked techs into output multipliers.
  */
 import type { Empire, WorldData } from './types.js';
-import { raceById } from './data.js';
+import { raceById } from './races.js';
 
 export type OutputCategory = 'mining' | 'industry' | 'science' | 'farm' | 'trade' | 'growth';
 

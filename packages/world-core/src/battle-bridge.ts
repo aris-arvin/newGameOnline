@@ -5,17 +5,19 @@
  * are mapped to combat blueprints, a deterministic battle is fought, and the
  * per-ship casualties are written back to the world fleets — so both sides can
  * take real, uneven losses. Oversized battles fall back to the quick resolve.
+ *
+ * The combat catalog/blueprints are INJECTED (not loaded here) so this module
+ * stays free of any filesystem dependency and runs in the browser as well as on
+ * the server (design prompt §18.3). Node callers use `./node` to build one from
+ * the JSON data; the browser builds one from imported JSON.
  */
 import { runBattle } from '@pure-galaxy/combat-core';
-import type { Blueprint, FleetShip, Side as CombatSide } from '@pure-galaxy/combat-core';
-import { loadDefaultCatalog, loadBlueprintMap } from '@pure-galaxy/combat-core/data';
-import type { Fleet, Ship, WorldData, WorldEvent, WorldState } from './types.js';
+import type { Blueprint, Catalog, FleetShip, Side as CombatSide } from '@pure-galaxy/combat-core';
+import type { Fleet, Ship, WorldData, WorldState } from './types.js';
 import { fleetPower, quickResolveSystemBattle, removeFleet, type BattleResolver } from './fleet.js';
 import { admiralForFleet } from './admiral.js';
 
-// The combat catalog/blueprints are static data — load once.
-const CATALOG = loadDefaultCatalog();
-const BLUEPRINTS = loadBlueprintMap();
+export type BlueprintLibrary = Map<string, Blueprint>;
 
 function powerTier(power: number): 0 | 1 | 2 | 3 {
   if (power < 15) return 0;
@@ -24,14 +26,14 @@ function powerTier(power: number): 0 | 1 | 2 | 3 {
   return 3;
 }
 
-function pickBlueprint(ship: Ship, bump: boolean, data: WorldData): Blueprint {
-  if (ship.design && BLUEPRINTS.has(ship.design)) return BLUEPRINTS.get(ship.design)!;
+function pickBlueprint(ship: Ship, bump: boolean, data: WorldData, blueprints: BlueprintLibrary): Blueprint {
+  if (ship.design && blueprints.has(ship.design)) return blueprints.get(ship.design)!;
   const ref = data.combat.referenceBlueprints;
-  if (ship.role !== 'warship') return BLUEPRINTS.get(ref.corvette)!;
+  if (ship.role !== 'warship') return blueprints.get(ref.corvette)!;
   const tiers = [ref.corvette, ref.frigate, ref.destroyer, ref.cruiser];
   let tier = powerTier(ship.power);
   if (bump) tier = Math.min(3, tier + 1) as 0 | 1 | 2 | 3;
-  return BLUEPRINTS.get(tiers[tier])!;
+  return blueprints.get(tiers[tier])!;
 }
 
 function doctrineFor(bp: Blueprint): string {
@@ -40,13 +42,13 @@ function doctrineFor(bp: Blueprint): string {
   return 'balanced';
 }
 
-function buildSide(sideId: string, fleets: Fleet[], world: WorldState, data: WorldData): CombatSide {
+function buildSide(sideId: string, fleets: Fleet[], world: WorldState, data: WorldData, blueprints: BlueprintLibrary): CombatSide {
   const ships: FleetShip[] = [];
   for (const fleet of fleets) {
     const admiral = admiralForFleet(world, fleet.id);
     fleet.ships.forEach((s, idx) => {
       const isFlag = !!admiral && idx === 0;
-      const bp = pickBlueprint(s, isFlag, data);
+      const bp = pickBlueprint(s, isFlag, data, blueprints);
       ships.push({ id: `${fleet.id}#${idx}`, blueprint: bp, doctrineId: doctrineFor(bp), isFlagship: isFlag });
     });
   }
@@ -79,38 +81,43 @@ function splitSides(world: WorldState, fleets: Fleet[]): { a: Fleet[]; b: Fleet[
   return { a, b, aEmpire };
 }
 
-export const tacticalResolve: BattleResolver = (world, data, fleets, rng, events) => {
-  if (!data.combat.tactical) {
-    quickResolveSystemBattle(world, data, fleets, rng, events);
-    return;
-  }
-  const { a, b, aEmpire } = splitSides(world, fleets);
-  const shipsA = a.reduce((n, f) => n + f.ships.length, 0);
-  const shipsB = b.reduce((n, f) => n + f.ships.length, 0);
-  if (shipsA === 0 || shipsB === 0 || shipsA > data.combat.maxShipsPerSide || shipsB > data.combat.maxShipsPerSide) {
-    quickResolveSystemBattle(world, data, fleets, rng, events);
-    return;
-  }
-
-  const sideA = buildSide('A', a, world, data);
-  const sideB = buildSide('B', b, world, data);
-  const result = runBattle([sideA, sideB], CATALOG, { seed: battleSeed(world, fleets) }, {});
-
-  // Apply per-ship casualties back to the world fleets.
-  const dead = new Set(result.ships.filter((s) => !s.alive).map((s) => s.id));
-  for (const fleet of [...a, ...b]) {
-    for (let idx = fleet.ships.length - 1; idx >= 0; idx--) {
-      if (dead.has(`${fleet.id}#${idx}`)) fleet.ships.splice(idx, 1);
+/**
+ * Build a tactical BattleResolver from a combat catalog + blueprint library.
+ * The returned resolver replaces the quick aggregate resolve.
+ */
+export function createTacticalResolver(catalog: Catalog, blueprints: BlueprintLibrary): BattleResolver {
+  return (world, data, fleets, rng, events) => {
+    if (!data.combat.tactical) {
+      quickResolveSystemBattle(world, data, fleets, rng, events);
+      return;
     }
-    if (fleet.ships.length === 0) removeFleet(world, fleet);
-  }
+    const { a, b, aEmpire } = splitSides(world, fleets);
+    const shipsA = a.reduce((n, f) => n + f.ships.length, 0);
+    const shipsB = b.reduce((n, f) => n + f.ships.length, 0);
+    if (shipsA === 0 || shipsB === 0 || shipsA > data.combat.maxShipsPerSide || shipsB > data.combat.maxShipsPerSide) {
+      quickResolveSystemBattle(world, data, fleets, rng, events);
+      return;
+    }
 
-  const winnerEmpire = result.winner === 'A' ? aEmpire : result.winner === 'B' ? (b[0]?.empireId ?? '') : '';
-  const winnerName = winnerEmpire ? world.empires[winnerEmpire]?.name ?? winnerEmpire : 'stalemate';
-  const sysName = world.galaxy.systems[fleets[0].systemId]?.name ?? fleets[0].systemId;
-  events.push({
-    time: world.time,
-    kind: 'battle',
-    text: `Tactical battle at ${sysName}: ${winnerName} prevails (${result.rounds} rounds, lost ${dead.size} ships)`,
-  });
-};
+    const sideA = buildSide('A', a, world, data, blueprints);
+    const sideB = buildSide('B', b, world, data, blueprints);
+    const result = runBattle([sideA, sideB], catalog, { seed: battleSeed(world, fleets) }, {});
+
+    const dead = new Set(result.ships.filter((s) => !s.alive).map((s) => s.id));
+    for (const fleet of [...a, ...b]) {
+      for (let idx = fleet.ships.length - 1; idx >= 0; idx--) {
+        if (dead.has(`${fleet.id}#${idx}`)) fleet.ships.splice(idx, 1);
+      }
+      if (fleet.ships.length === 0) removeFleet(world, fleet);
+    }
+
+    const winnerEmpire = result.winner === 'A' ? aEmpire : result.winner === 'B' ? (b[0]?.empireId ?? '') : '';
+    const winnerName = winnerEmpire ? world.empires[winnerEmpire]?.name ?? winnerEmpire : 'stalemate';
+    const sysName = world.galaxy.systems[fleets[0].systemId]?.name ?? fleets[0].systemId;
+    events.push({
+      time: world.time,
+      kind: 'battle',
+      text: `Tactical battle at ${sysName}: ${winnerName} prevails (${result.rounds} rounds, lost ${dead.size} ships)`,
+    });
+  };
+}

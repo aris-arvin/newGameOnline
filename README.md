@@ -17,6 +17,8 @@ packages/shared/            Deterministic primitives shared by all sims (PRNG, s
 packages/combat-core/       Deterministic tactical WEGO combat engine (Phase 1, §21.2).
 packages/world-core/        Deterministic world simulation: galaxy, economy, society,
                             politics, seasons — and the world<->combat bridge (Phases 0-4).
+apps/web/                   React + Vite web client (vertical slice) running the engines
+                            live in the browser: galaxy map, empire dashboard, ship lab.
 ```
 
 `world-core` depends on `combat-core`: when hostile fleets meet, the engagement
@@ -172,10 +174,35 @@ plus pirate and Ancient factions, runs the full economy + society + politics
 tick to a **season victory**, and prints a deterministic state hash proving the
 run is reproducible.
 
+## `@pure-galaxy/web` — the client (vertical slice)
+
+A React + Vite app that runs the **real, unmodified engines in the browser**
+(no mock data, design prompt §18.3) with a dark, layered UI (§17):
+
+- **Galaxy** — an SVG map from `generateGalaxy` (systems, hyperlanes, colonies
+  coloured by owner) with a system/planet inspector showing biome, size,
+  richness and habitability.
+- **Empires** — live standings, the Galactic Senate, Federation market prices,
+  society counters and the season victory banner, all from `spectateSnapshot`.
+  Tick controls advance the whole simulation.
+- **Ship Lab** — an interactive ship builder with **live** `computeShipStats`
+  and a 3-v-3 `runBattle` sparring result (winner, rounds, survivors, replay
+  hash) — the deterministic WEGO engine, in the browser.
+
+```bash
+pnpm --filter @pure-galaxy/web run dev      # dev server
+pnpm --filter @pure-galaxy/web run build    # production build
+```
+
+Making the client possible required the world core to be browser-safe: the
+combat catalog is now injected into the battle bridge (no filesystem imports),
+so the entire sim compiles into a ~70 KB gzipped bundle.
+
 ## Status
 
 All five roadmap phases of simulation are built and tested (**87 tests**, CI-guarded),
-and the two engines are joined by the world↔combat bridge:
+the two engines are joined by the world↔combat bridge, and a browser client runs
+them live:
 
 - **Phase 0 — world/economy tick** (`world-core`).
 - **Phase 1 — tactical combat engine** (`combat-core`).
@@ -187,6 +214,7 @@ and the two engines are joined by the world↔combat bridge:
 - **Phase 4 — polish** (seasons + Legacy soft restart, honest-F2P monetization
   invariant, spectator/mobile snapshot, balance autobattler in CI).
 
-The world's fleet battles are now resolved by the tactical engine via the
-bridge. Still to come: the **client/UI** (React + PixiJS: galaxy map, ship
-builder, doctrine editor, battle replays) and **networking/server**.
+A **vertical-slice web client** (`apps/web`) runs the engines live in the
+browser. Still to come: fleshing the client out (PixiJS battle replays, doctrine
+editor, planet/region management) and a **networking/server** layer for real
+multiplayer.

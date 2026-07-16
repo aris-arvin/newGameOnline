@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { loadWorldData } from '../src/data.js';
 import { createWorld, tick, worldHash } from '../src/world.js';
 import { createFleet } from '../src/fleet.js';
+import { nodeTacticalResolver } from '../src/node.js';
 import type { WorldData, WorldState } from '../src/types.js';
 
 const data = loadWorldData();
+const resolver = nodeTacticalResolver();
 const smallGalaxy = { sectors: 5, systemsPerSector: 5, laneNeighbors: 3 };
 
 function scene(seed = 5): { w: WorldState; sys: string } {
@@ -25,7 +27,7 @@ describe('world<->combat bridge (сшивка)', () => {
     ]);
     const weak = createFleet(w, 'emp1', sys, [{ role: 'warship', power: 12 }]);
 
-    tick(w, data);
+    tick(w, data, resolver);
 
     expect(w.log.some((e) => e.kind === 'battle' && e.text.includes('Tactical'))).toBe(true);
     expect(w.fleets[weak.id]).toBeUndefined(); // the weak side is wiped
@@ -41,8 +43,8 @@ describe('world<->combat bridge (сшивка)', () => {
     };
     const a = build();
     const b = build();
-    tick(a, data);
-    tick(b, data);
+    tick(a, data, resolver);
+    tick(b, data, resolver);
     expect(worldHash(a)).toBe(worldHash(b));
   });
 
@@ -52,7 +54,7 @@ describe('world<->combat bridge (сшивка)', () => {
     createFleet(w, 'emp0', sys, [{ role: 'warship', power: 90 }, { role: 'warship', power: 90 }]);
     const weak = createFleet(w, 'emp1', sys, [{ role: 'warship', power: 12 }]);
 
-    tick(w, quickData);
+    tick(w, quickData, resolver);
 
     const battles = w.log.filter((e) => e.kind === 'battle');
     expect(battles.length).toBeGreaterThan(0);
