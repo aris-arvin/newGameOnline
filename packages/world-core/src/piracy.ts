@@ -32,6 +32,12 @@ export function spawnPirates(world: WorldState, data: WorldData, count = 2, powe
     relations: {},
     counterIntel: 0,
     pirate: true,
+    ancient: false,
+    artifacts: 0,
+    expeditionsDone: 0,
+    tradeVolume: 0,
+    sanctionedUntil: 0,
+    admiralIds: [],
   };
   const systemIds = Object.keys(world.galaxy.systems).sort();
   for (let k = 0; k < count; k++) {

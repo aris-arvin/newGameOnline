@@ -73,5 +73,43 @@
   "protection": {
     "ratingThreshold": 900,
     "graceTicks": 40
+  },
+  "senate": {
+    "sessionInterval": 12,
+    "termLength": 60,
+    "taxRate": 5,
+    "proposalFocusCost": 6,
+    "sanctionTicks": 24
+  },
+  "ancients": {
+    "firstRaidTick": 50,
+    "raidInterval": 30,
+    "raidPower": 120,
+    "raidGrowth": 20
+  },
+  "archaeology": {
+    "excavationPerTick": 2,
+    "artifactThreshold": 60,
+    "deviceChancePct": 35,
+    "creditReward": 120
+  },
+  "expeditions": {
+    "count": 5,
+    "baseDifficulty": 100,
+    "difficultyStep": 40,
+    "costCredits": 200,
+    "durationTicks": 8,
+    "minResearch": 150
+  },
+  "admirals": {
+    "cost": 80,
+    "powerBonusPerLevel": 8
+  },
+  "victory": {
+    "militarySectorPct": 40,
+    "militaryHoldTicks": 30,
+    "economicSharePct": 40,
+    "economicHoldTicks": 30,
+    "economicMinVolume": 8000
   }
 }

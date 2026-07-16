@@ -20,6 +20,13 @@ import { logisticsStep, marketStep, makeMarket } from './market.js';
 import { espionageStep } from './espionage.js';
 import { piracyStep } from './piracy.js';
 import { protectionStep } from './protection.js';
+import { makeSenate, senateStep } from './senate.js';
+import { archaeologyStep } from './archaeology.js';
+import { ancientsStep } from './ancients.js';
+import { expeditionsStep } from './expeditions.js';
+import { invasionStep } from './invasion.js';
+import { checkVictory } from './victory.js';
+import { recruitAdmiral, assignAdmiral, admiralForFleet } from './admiral.js';
 
 export interface CreateWorldOptions {
   races?: string[];
@@ -46,6 +53,11 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
     treaties: [],
     market: makeMarket(data),
     agents: {},
+    senate: makeSenate(data),
+    admirals: {},
+    galacticFund: 0,
+    victor: null,
+    holds: { military: {}, economic: {} },
   };
 
   const usedPlanets = new Set<string>();
@@ -87,6 +99,12 @@ export function createWorld(seed: number, data: WorldData, opts: CreateWorldOpti
       relations: {},
       counterIntel: 0,
       pirate: false,
+      ancient: false,
+      artifacts: 0,
+      expeditionsDone: 0,
+      tradeVolume: 0,
+      sanctionedUntil: 0,
+      admiralIds: [],
     };
     world.empires[empireId] = empire;
 
@@ -140,9 +158,34 @@ export function tick(world: WorldState, data: WorldData): WorldState {
   for (const e of fleetStep(world, data, rng.fork(4))) world.log.push(e);
   protectionStep(world, data);
 
+  // --- Politics & PvE (Phase 3) ----------------------------------------
+  senateStep(world, data, rng.fork(5));
+  archaeologyStep(world, data, rng.fork(6));
+  ancientsStep(world, data, rng.fork(7));
+  expeditionsStep(world, data, rng.fork(8));
+  invasionStep(world, data);
+  admiralAi(world, data, rng.fork(9));
+  checkVictory(world, data);
+
   world.time += 1;
   if (world.log.length > LOG_CAP) world.log = world.log.slice(-LOG_CAP);
   return world;
+}
+
+/** Light AI: wealthy empires with an unled fleet recruit and assign an admiral. */
+function admiralAi(world: WorldState, data: WorldData, rng: Rng): void {
+  for (const eid of Object.keys(world.empires).sort()) {
+    const e = world.empires[eid];
+    if (e.pirate || e.ancient || e.fleetIds.length === 0) continue;
+    if (e.credits < data.admirals.cost * 3) continue;
+    const unled = e.fleetIds.find((fid) => world.fleets[fid] && !admiralForFleet(world, fid));
+    if (!unled) continue;
+    const r = rng.fork(eid.length * 31 + world.time);
+    if (r.percent(15)) {
+      const admiral = recruitAdmiral(world, eid, data, r);
+      if (admiral) assignAdmiral(world, admiral.id, unled);
+    }
+  }
 }
 
 export function runTicks(world: WorldState, data: WorldData, n: number): WorldState {
@@ -168,6 +211,12 @@ export function worldHash(world: WorldState): string {
           fleets: e.fleetIds.length,
           treasury: e.treasury,
           relations: e.relations,
+          artifacts: e.artifacts,
+          expeditionsDone: e.expeditionsDone,
+          tradeVolume: e.tradeVolume,
+          sanctionedUntil: e.sanctionedUntil,
+          admirals: e.admiralIds.length,
+          expeditionRun: e.expeditionRun ?? null,
         };
       }),
     colonies: Object.keys(world.colonies)
@@ -205,6 +254,21 @@ export function worldHash(world: WorldState): string {
         const a = world.agents[id];
         return { id, e: a.empireId, t: a.targetEmpireId ?? '', m: a.mission ?? '', p: a.progress, cd: a.cooldown, lvl: a.level };
       }),
+    senate: {
+      president: world.senate.president ?? '',
+      terms: world.senate.termCount,
+      streak: world.senate.consecutiveTerms,
+    },
+    admirals: Object.keys(world.admirals)
+      .sort()
+      .map((id) => {
+        const a = world.admirals[id];
+        return { id, e: a.empireId, lvl: a.level, spec: a.spec, f: a.fleetId ?? '' };
+      }),
+    colonyExtras: Object.keys(world.colonies)
+      .sort()
+      .map((id) => [id, world.colonies[id].empireId, world.colonies[id].unrest ?? 0, Math.floor(world.colonies[id].excavation ?? 0)]),
+    victor: world.victor ? [world.victor.empireId, world.victor.reason] : null,
   };
   return hashValue(projection);
 }

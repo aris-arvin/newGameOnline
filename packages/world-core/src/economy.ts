@@ -40,7 +40,11 @@ export function economyStep(
   for (const r of colony.regions) energyCons += econ.energyPerLevel * r.level;
   const energyRatio = energyCons > 0 ? Math.min(100, Math.floor((energyProd * 100) / energyCons)) : 100;
 
-  const throttle = Math.min(fillRatio, energyRatio); // percent applied to all production
+  // Post-conquest unrest suppresses output and decays over time (§10.10).
+  const unrestFactor = Math.max(40, 100 - (colony.unrest ?? 0));
+  if (colony.unrest && colony.unrest > 0) colony.unrest = Math.max(0, colony.unrest - 3);
+
+  const throttle = Math.min(fillRatio, energyRatio, unrestFactor); // percent applied to all production
 
   const mineM = empireMultiplier(empire, 'mining', data);
   const indM = empireMultiplier(empire, 'industry', data);

@@ -13,6 +13,7 @@ import { createFleet } from '../src/fleet.js';
 import { findPath } from '../src/galaxy.js';
 import { habitability, makeStock } from '../src/colony.js';
 import { spawnPirates, dispatchConvoy, PIRATE_EMPIRE } from '../src/piracy.js';
+import { spawnAncients } from '../src/ancients.js';
 import { TRADE_COMMODITIES } from '../src/market.js';
 import type { WorldData, WorldState } from '../src/types.js';
 import { MATERIAL_KINDS } from '../src/types.js';
@@ -52,6 +53,7 @@ function buildWorld(seed: number, data: WorldData, races: string[]): WorldState 
   }
 
   spawnPirates(world, data, 2);
+  spawnAncients(world, data);
   return world;
 }
 
@@ -67,7 +69,7 @@ function stepWorld(world: WorldState, data: WorldData): void {
   tick(world, data);
 }
 
-function empireLine(world: WorldState, empireId: string): string {
+function empireLine(world: WorldState, empireId: string, data: WorldData): string {
   const e = world.empires[empireId];
   let pop = 0;
   const mat: Record<string, number> = {};
@@ -77,19 +79,18 @@ function empireLine(world: WorldState, empireId: string): string {
     pop += c.population;
     for (const m of MATERIAL_KINDS) mat[m] = (mat[m] ?? 0) + c.stock[m];
   }
-  const treas = TRADE_COMMODITIES.map((m) => e.treasury[m]).join('/');
   return (
     `${e.name.padEnd(11)} col ${String(e.colonyIds.length).padStart(2)} pop ${String(pop).padStart(4)} ` +
     `cr ${String(e.credits).padStart(6)} sci ${e.research.physics}/${e.research.economics} tech ${e.unlockedTechs.length} ` +
-    `treas[a/f/e/c] ${treas}`
+    `art ${e.artifacts} exp ${e.expeditionsDone}/${data.expeditions.count} adm ${e.admiralIds.length}`
   );
 }
 
 function main(): void {
   const data = loadWorldData();
   const seed = Number.parseInt(arg('seed', '7'), 10);
-  const ticks = Number.parseInt(arg('ticks', '60'), 10);
-  const every = Number.parseInt(arg('every', '12'), 10);
+  const ticks = Number.parseInt(arg('ticks', '200'), 10);
+  const every = Number.parseInt(arg('every', '40'), 10);
   const races = arg('races', 'sol,reptiloid,tumali,gerber').split(',');
 
   console.log(`\n=== PURE GALAXY world simulator (Phase 0 + Society) ===`);
@@ -101,30 +102,38 @@ function main(): void {
   console.log('Homeworlds:');
   for (const eid of Object.keys(world.empires).sort()) {
     const e = world.empires[eid];
-    if (e.pirate) continue;
+    if (e.pirate || e.ancient) continue;
     const home = world.galaxy.planets[world.colonies[e.colonyIds[0]].planetId];
     console.log(`  ${e.name.padEnd(11)} ${home.name} (${home.biome}, size ${home.size}, rich ${home.richness}) hab ${habitability(home, raceById(data, e.raceId), data)}`);
   }
 
-  console.log(`\nEconomy & society over time:`);
+  console.log(`\nEconomy, society & politics over time:`);
   for (let t = 0; t < ticks; t++) {
     stepWorld(world, data);
     if ((t + 1) % every === 0 || t === ticks - 1) {
-      console.log(`-- t=${world.time} --`);
+      console.log(`-- t=${world.time}${world.victor ? ' (victory decided)' : ''} --`);
       for (const eid of Object.keys(world.empires).sort()) {
-        if (world.empires[eid].pirate) continue;
-        console.log('  ' + empireLine(world, eid));
+        if (world.empires[eid].pirate || world.empires[eid].ancient) continue;
+        console.log('  ' + empireLine(world, eid, data));
       }
       const prices = TRADE_COMMODITIES.map((c) => `${c[0]}${world.market.prices[c]}`).join(' ');
-      const pirateFleets = world.empires[PIRATE_EMPIRE]?.fleetIds.length ?? 0;
-      console.log(`  society: treaties ${world.treaties.length}, agents ${Object.keys(world.agents).length}, pirate fleets ${pirateFleets}, prices ${prices}`);
+      const president = world.senate.president ? world.empires[world.senate.president]?.name : '—';
+      console.log(
+        `  senate: president ${president} (term ${world.senate.termCount}, streak ${world.senate.consecutiveTerms}), ` +
+          `treaties ${world.treaties.length}, agents ${Object.keys(world.agents).length}, prices ${prices}`,
+      );
     }
   }
 
-  const society = world.log.filter((e) => ['treaty', 'spy', 'convoy', 'battle', 'protection', 'colonized', 'tech'].includes(e.kind)).slice(-12);
-  if (society.length) {
-    console.log('\nSociety events:');
-    for (const e of society) console.log(`  [t${e.time}] ${e.kind}: ${e.text}`);
+  const events = world.log
+    .filter((e) => ['senate', 'ancients', 'artifact', 'expedition', 'invasion', 'victory', 'treaty', 'spy'].includes(e.kind))
+    .slice(-16);
+  if (events.length) {
+    console.log('\nPolitics & PvE events:');
+    for (const e of events) console.log(`  [t${e.time}] ${e.kind}: ${e.text}`);
+  }
+  if (world.victor) {
+    console.log(`\n*** ${world.empires[world.victor.empireId]?.name} wins a ${world.victor.reason.toUpperCase()} victory at t${world.victor.time} ***`);
   }
 
   // Determinism proof: identical procedure, fresh world, identical hash.

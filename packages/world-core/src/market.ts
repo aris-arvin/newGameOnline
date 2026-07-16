@@ -115,6 +115,7 @@ export function marketStep(world: WorldState, data: WorldData): void {
     const price = world.market.prices[commodity];
     for (const eid of empireIds) {
       const e = world.empires[eid];
+      if (e.sanctionedUntil > world.time) continue; // embargoed by the Senate (§11.3)
       const held = e.treasury[commodity];
       if (held > cfg.treasuryTarget) mk(eid, 'ask', commodity, npcSell(price, cfg), held - cfg.treasuryTarget);
       else if (held < MIN_HOLD) {
@@ -152,18 +153,21 @@ export function marketStep(world: WorldState, data: WorldData): void {
 }
 
 function settle(world: WorldState, t: Trade): void {
+  const turnover = t.price * t.qty;
   if (t.seller !== FED) {
     const s = world.empires[t.seller];
     if (s) {
       s.treasury[t.commodity] -= t.qty;
-      s.credits += t.price * t.qty;
+      s.credits += turnover;
+      s.tradeVolume += turnover; // for the economic victory share (§15)
     }
   }
   if (t.buyer !== FED) {
     const b = world.empires[t.buyer];
     if (b) {
       b.treasury[t.commodity] += t.qty;
-      b.credits -= t.price * t.qty;
+      b.credits -= turnover;
+      b.tradeVolume += turnover;
     }
   }
 }

@@ -103,6 +103,10 @@ export interface Colony {
   buildQueue: BuildOrder[];
   /** Governor plan id, or '' for manual control. */
   governor: string;
+  /** Accumulated ruin-excavation progress (§13); undefined = none. */
+  excavation?: number;
+  /** Loyalty/unrest after conquest, 0..100 (§10.10); undefined = fully loyal. */
+  unrest?: number;
 }
 
 // --- Empires & fleets -----------------------------------------------------
@@ -130,9 +134,23 @@ export interface Empire {
   counterIntel: number;
   /** True for the roaming pirate faction (§14.4). */
   pirate: boolean;
+  // --- Phase 3 (politics & PvE) ---
+  /** True for the Ancients NPC faction (§13). */
+  ancient: boolean;
+  /** Artifacts recovered from ruins (§13). */
+  artifacts: number;
+  /** Gate expeditions completed, 0..5 (§13, §15 science victory). */
+  expeditionsDone: number;
+  /** Cumulative market turnover, for the economic victory share (§15). */
+  tradeVolume: number;
+  /** Tick until which the empire is embargoed from the NPC market (§11.3). */
+  sanctionedUntil: number;
+  admiralIds: string[];
+  /** In-progress Gate expedition, if any (§13). */
+  expeditionRun?: { stage: number; progress: number };
 }
 
-export type ShipRole = 'warship' | 'colony' | 'miner';
+export type ShipRole = 'warship' | 'colony' | 'miner' | 'troops';
 
 export interface Ship {
   role: ShipRole;
@@ -179,6 +197,48 @@ export interface WorldState {
   treaties: Treaty[];
   market: MarketState;
   agents: Record<string, Agent>;
+  // --- Politics & PvE (Phase 3, §11.3, §13, §15) ---
+  senate: SenateState;
+  admirals: Record<string, Admiral>;
+  galacticFund: number;
+  victor: Victor | null;
+  /** Consecutive-tick counters toward the sustained victory conditions (§15). */
+  holds: { military: Record<string, number>; economic: Record<string, number> };
+}
+
+// --- Senate (§11.3) -------------------------------------------------------
+
+export interface SenateState {
+  president: string | null;
+  presidentSince: number;
+  consecutiveTerms: number;
+  termCount: number;
+  nextSession: number;
+  nextElection: number;
+  resolutionLog: { tick: number; type: string; passed: boolean; text: string }[];
+}
+
+// --- Admirals (§9) --------------------------------------------------------
+
+export type AdmiralSpec = 'gunnery' | 'carrier' | 'raider' | 'defense' | 'logistics';
+
+export interface Admiral {
+  id: string;
+  empireId: string;
+  name: string;
+  level: number;
+  spec: AdmiralSpec;
+  fleetId?: string;
+}
+
+// --- Victory (§15) --------------------------------------------------------
+
+export type VictoryReason = 'military' | 'diplomatic' | 'science' | 'economic';
+
+export interface Victor {
+  empireId: string;
+  reason: VictoryReason;
+  time: number;
 }
 
 // --- Diplomacy (§11) ------------------------------------------------------
@@ -344,6 +404,51 @@ export interface ProtectionConfig {
   graceTicks: number;
 }
 
+export interface SenateConfig {
+  sessionInterval: number;
+  termLength: number;
+  taxRate: number;
+  proposalFocusCost: number;
+  sanctionTicks: number;
+}
+
+export interface AncientsConfig {
+  firstRaidTick: number;
+  raidInterval: number;
+  raidPower: number;
+  raidGrowth: number;
+}
+
+export interface ArchaeologyConfig {
+  excavationPerTick: number;
+  artifactThreshold: number;
+  deviceChancePct: number;
+  creditReward: number;
+}
+
+export interface ExpeditionConfig {
+  count: number;
+  baseDifficulty: number;
+  difficultyStep: number;
+  costCredits: number;
+  durationTicks: number;
+  minResearch: number;
+}
+
+export interface AdmiralConfig {
+  cost: number;
+  powerBonusPerLevel: number;
+}
+
+export interface VictoryConfig {
+  militarySectorPct: number;
+  militaryHoldTicks: number;
+  economicSharePct: number;
+  economicHoldTicks: number;
+  /** Minimum galactic turnover before the economic share can count (anti early-win). */
+  economicMinVolume: number;
+}
+
 export interface WorldData {
   economy: EconomyConfig;
   regionBase: Record<RegionSpec, RegionBaseDef>;
@@ -355,4 +460,10 @@ export interface WorldData {
   market: MarketConfig;
   espionage: EspionageConfig;
   protection: ProtectionConfig;
+  senate: SenateConfig;
+  ancients: AncientsConfig;
+  archaeology: ArchaeologyConfig;
+  expeditions: ExpeditionConfig;
+  admirals: AdmiralConfig;
+  victory: VictoryConfig;
 }

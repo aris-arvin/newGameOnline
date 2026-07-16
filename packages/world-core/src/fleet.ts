@@ -11,6 +11,7 @@ import { laneDistance } from './galaxy.js';
 import { createColony } from './colony.js';
 import { areHostile } from './diplomacy.js';
 import { isProtected } from './protection.js';
+import { admiralBonus, killFleetAdmirals } from './admiral.js';
 
 export function fleetPower(fleet: Fleet): number {
   let p = 0;
@@ -30,6 +31,7 @@ function destroyFleet(world: WorldState, fleet: Fleet): void {
   delete world.fleets[fleet.id];
   const empire = world.empires[fleet.empireId];
   if (empire) empire.fleetIds = empire.fleetIds.filter((f) => f !== fleet.id);
+  killFleetAdmirals(world, fleet.id); // the admiral dies with the fleet (§9)
 }
 
 /** Integer ceiling of a/b for non-negative integers. */
@@ -122,13 +124,13 @@ function resolveBattles(world: WorldState, data: WorldData, rng: Rng, events: Wo
       }
     }
     if (active.size < 2) continue;
-    resolveSystemBattle(world, fleets.filter((f) => active.has(f.empireId)), rng, events);
+    resolveSystemBattle(world, data, fleets.filter((f) => active.has(f.empireId)), rng, events);
   }
 }
 
-function resolveSystemBattle(world: WorldState, fleets: Fleet[], rng: Rng, events: WorldEvent[]): void {
+function resolveSystemBattle(world: WorldState, data: WorldData, fleets: Fleet[], rng: Rng, events: WorldEvent[]): void {
   const power: Record<string, number> = {};
-  for (const f of fleets) power[f.empireId] = (power[f.empireId] ?? 0) + fleetPower(f);
+  for (const f of fleets) power[f.empireId] = (power[f.empireId] ?? 0) + fleetPower(f) + admiralBonus(world, f.id, data);
   const emps = Object.keys(power).sort();
 
   let winner = emps[0];

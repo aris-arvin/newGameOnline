@@ -47,7 +47,7 @@ export function areHostile(world: WorldState, a: string, b: string): boolean {
   const ea = world.empires[a];
   const eb = world.empires[b];
   if (!ea || !eb) return false;
-  if (ea.pirate || eb.pirate) return true;
+  if (ea.pirate || eb.pirate || ea.ancient || eb.ancient) return true;
   return !areAllied(world, a, b);
 }
 
