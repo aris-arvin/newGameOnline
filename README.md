@@ -17,6 +17,8 @@ packages/shared/            Deterministic primitives shared by all sims (PRNG, s
 packages/combat-core/       Deterministic tactical WEGO combat engine (Phase 1, §21.2).
 packages/world-core/        Deterministic world simulation: galaxy, economy, society,
                             politics, seasons — and the world<->combat bridge (Phases 0-4).
+packages/server/            Authoritative multiplayer server: WebSocket state streaming +
+                            REST, deterministic tick loop, pluggable persistence.
 apps/web/                   React + Vite web client (vertical slice) running the engines
                             live in the browser: galaxy map, empire dashboard, ship lab.
 ```
@@ -198,11 +200,38 @@ Making the client possible required the world core to be browser-safe: the
 combat catalog is now injected into the battle bridge (no filesystem imports),
 so the entire sim compiles into a ~70 KB gzipped bundle.
 
+## `@pure-galaxy/server` — authoritative multiplayer
+
+A Node service (plain `http` + `ws`, no framework) that makes the game
+multiplayer while keeping the server the single source of truth (§2.1, §18.2,
+§18.4):
+
+- **Authoritative tick loop** — one world, advanced by the deterministic tick on
+  a fixed cadence; clients never run the simulation, they only render what they
+  are sent.
+- **WebSocket streaming** — on each tick every client gets a public snapshot
+  (no fog-of-war secrets), and each owning connection also gets a private "mine"
+  view of its empire.
+- **Validated commands** — `join`, then ownership-checked commands
+  (`set_research`, `set_governor`, `dispatch_expedition`, `recruit_admiral`,
+  `colonize`) with per-connection rate limiting.
+- **REST** — `GET /health`, `GET /state`.
+- **Pluggable persistence** — in-memory and file adapters with a save/load
+  round-trip (a PostgreSQL/Redis adapter drops into the same interface).
+- **Season rollover** — on a victory or timeout the server soft-restarts into
+  the next season, keeping players on their empires.
+
+```bash
+PORT=8787 TICK_MS=2000 pnpm --filter @pure-galaxy/server run serve
+# then, in another shell:
+URL=ws://localhost:8787 pnpm --filter @pure-galaxy/server run smoke
+```
+
 ## Status
 
-All five roadmap phases of simulation are built and tested (**87 tests**, CI-guarded),
-the two engines are joined by the world↔combat bridge, and a browser client runs
-them live:
+All five roadmap phases of simulation are built and tested (**93 tests**, CI-guarded),
+the two engines are joined by the world↔combat bridge, an authoritative server
+makes it multiplayer, and a browser client runs it live:
 
 - **Phase 0 — world/economy tick** (`world-core`).
 - **Phase 1 — tactical combat engine** (`combat-core`).
@@ -215,6 +244,8 @@ them live:
   invariant, spectator/mobile snapshot, balance autobattler in CI).
 
 A **vertical-slice web client** (`apps/web`) runs the engines live in the
-browser. Still to come: fleshing the client out (PixiJS battle replays, doctrine
-editor, planet/region management) and a **networking/server** layer for real
-multiplayer.
+browser, and an **authoritative server** (`packages/server`) streams a shared
+world over WebSocket. Still to come: connecting the web client to the live
+server, fleshing out the client (PixiJS battle replays, doctrine editor,
+planet/region management), and productionising persistence (PostgreSQL/Redis)
+and horizontal battle/sector sharding (§18.2).

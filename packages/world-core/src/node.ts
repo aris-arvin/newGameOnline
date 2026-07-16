@@ -6,6 +6,9 @@ import { loadDefaultCatalog, loadBlueprintMap } from '@pure-galaxy/combat-core/d
 import { createTacticalResolver } from './battle-bridge.js';
 import type { BattleResolver } from './fleet.js';
 
+// Node-only data loaders (kept off the browser entry) for server/CLI callers.
+export { loadWorldData, loadTutorial, loadMonetization, raceById } from './data.js';
+
 /** A tactical battle resolver built from the shipped combat JSON data. */
 export function nodeTacticalResolver(): BattleResolver {
   return createTacticalResolver(loadDefaultCatalog(), loadBlueprintMap());
