@@ -13,12 +13,28 @@ The full design brief is [`GAME_PROMPT.md`](./GAME_PROMPT.md).
 
 ```
 GAME_PROMPT.md              The complete design document (RU).
-packages/combat-core/       Deterministic tactical combat engine (Phase 1 priority, §21.2).
+packages/shared/            Deterministic primitives shared by all sims (PRNG, stable hashing).
+packages/combat-core/       Deterministic tactical WEGO combat engine (Phase 1, §21.2).
+packages/world-core/        Deterministic world simulation: galaxy, colonies, economy tick (Phase 0, §20).
 ```
 
-Development follows the roadmap in `GAME_PROMPT.md` §20. Per §21.2 the first
-buildable slice is the **deterministic WEGO combat core** — the game's core
-competitive advantage (§0.3) — so that is what lives here first.
+Development follows the roadmap in `GAME_PROMPT.md` §20. Two vertical slices exist:
+
+- **Phase 1 — combat** (`combat-core`): the game's core competitive advantage
+  (§0.3), prioritised per §21.2.
+- **Phase 0 — world core** (`world-core`): the persistent galaxy and the stable
+  deterministic economic tick that everything else runs on.
+
+Both are pure, server-authoritative, and fully deterministic — a simulation is a
+function of `(inputs, seed)` and reproduces bit-for-bit from a state/event hash.
+
+## Quick start
+
+```bash
+pnpm install
+pnpm test          # all packages: shared + combat-core + world-core
+pnpm typecheck
+```
 
 ## `@pure-galaxy/combat-core`
 
@@ -39,22 +55,6 @@ event log (design prompt §10.3, §10.12). It implements, at v1 scope:
 - **Data-driven balance**: every hull, component, weapon and blueprint lives in
   `packages/combat-core/data/*.json` (§21.3).
 
-### Requirements
-
-Node 20+ and `pnpm`.
-
-### Setup
-
-```bash
-pnpm install
-```
-
-### Run the tests (determinism, geometry, blueprints, battle outcomes)
-
-```bash
-pnpm test
-```
-
 ### Watch a battle
 
 ```bash
@@ -74,7 +74,38 @@ pnpm meta -- --runs 500
 Prints a weapon×armour rounds-to-kill matrix and squadron-scale win-rates — the
 harness a shipped game runs in CI on every balance change.
 
+## `@pure-galaxy/world-core`
+
+The Phase-0 persistent-world simulation (design prompt §20 acceptance: a **stable
+economic tick**). Deterministic, integer-only, no filesystem in the core:
+
+- **Procedural galaxy** (§3): sectors → systems → planets (biome, gravity, size,
+  richness, asteroid belts, ruins) with a connected hyperlane graph.
+- **Colonies & regions** (§6): planet habitability = f(biome, gravity, race);
+  regions carry a specialization + level with cluster synergy.
+- **Five resource groups → materials** (§5): mining/farming/extraction feed
+  production recipes (alloys, fuel, electronics, composites) and construction.
+- **Population** with food-driven growth and starvation; **energy** and staffing
+  throttles.
+- **Science** (§7): two schools with milestone tech unlocks and empire-wide
+  bonuses. **Governors** (§6.4) auto-develop colonies for offline players.
+  **Imperial focus** regen (§6.5).
+- **Fleets** with hyperlane travel, **colonization**, and a Phase-0 **non-tactical
+  auto-battle** (§20) — distinct from the tactical engine in `combat-core`.
+
+### Run the world simulator
+
+```bash
+pnpm --filter @pure-galaxy/world-core run worldsim -- --seed 7 --ticks 48 --every 12
+```
+
+Generates a galaxy, seeds four empires (Солы / Рептилоиды / Тумали / Герберы),
+runs the economy, and prints a deterministic state hash proving the tick is
+reproducible.
+
 ## Status
 
-This is the Phase-1 combat prototype. The economy/world simulation (Phase 0),
-client, and the rest of the systems in `GAME_PROMPT.md` are not built yet.
+Two deterministic simulation cores are built and tested (45 tests): the Phase-0
+world/economy tick and the Phase-1 tactical combat engine. Still to come: the
+client/UI, networking/server, and the higher-phase systems in `GAME_PROMPT.md`
+(alliances, Senate, espionage, seasons).

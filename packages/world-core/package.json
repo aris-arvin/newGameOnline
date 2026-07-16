@@ -1,7 +1,7 @@
 {
-  "name": "@pure-galaxy/combat-core",
+  "name": "@pure-galaxy/world-core",
   "version": "0.1.0",
-  "description": "Deterministic WEGO tactical combat engine for PURE GALAXY (design prompt §10, §21.2).",
+  "description": "Deterministic world simulation for PURE GALAXY: galaxy, colonies, economy tick, science, fleets (Phase 0, design prompt §20).",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -12,8 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "autobattle": "tsx bin/autobattle.ts",
-    "meta": "tsx bin/meta.ts"
+    "worldsim": "tsx bin/worldsim.ts"
   },
   "dependencies": {
     "@pure-galaxy/shared": "workspace:*"

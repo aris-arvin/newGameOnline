@@ -1,0 +1,59 @@
+{
+  "economy": {
+    "workersPerJob": 4,
+    "baseIp": 3,
+    "energyBase": 20,
+    "energyPerRegion": 4,
+    "energyPerLevel": 3,
+    "focusRegen": 1,
+    "focusCap": 48,
+    "baseCreditsPerColony": 3,
+    "taxPerPop": 2,
+    "upkeepPerRegionLevel": 1,
+    "upkeepPerFleetPower": 0,
+    "popGrowthDivisor": 100,
+    "developBaseCost": 30,
+    "developCostPerLevel": 20,
+    "addRegionCost": 40,
+    "fleetSpeed": 3
+  },
+  "regionBase": {
+    "empty": {},
+    "mining": { "metals": 3, "minerals": 2 },
+    "extractor": { "gas": 4 },
+    "farm": { "food": 12, "organics": 3 },
+    "industry": { "ip": 6 },
+    "science": { "research": 3 },
+    "housing": { "popCap": 24 },
+    "spaceport": { "credits": 4, "exotic": 1 },
+    "military": { "defense": 8 }
+  },
+  "biomes": {
+    "terra": { "fertility": 2, "gasBonus": 0, "habitability": 90 },
+    "ocean": { "fertility": 2, "gasBonus": 0, "habitability": 70 },
+    "tundra": { "fertility": 1, "gasBonus": 0, "habitability": 55 },
+    "desert": { "fertility": 1, "gasBonus": 1, "habitability": 50 },
+    "toxic": { "fertility": 0, "gasBonus": 2, "habitability": 30 },
+    "lava": { "fertility": 0, "gasBonus": 1, "habitability": 20 },
+    "barren": { "fertility": 0, "gasBonus": 0, "habitability": 15 }
+  },
+  "gravityHabMod": { "low": -5, "normal": 0, "high": -10 },
+  "races": [
+    { "id": "sol", "name": "Солы", "homeBiome": "terra", "growthPct": 4, "mods": { "industry": 115, "science": 90 }, "biomeAffinity": 15 },
+    { "id": "reptiloid", "name": "Рептилоиды", "homeBiome": "desert", "growthPct": 3, "mods": { "mining": 110, "industry": 105 }, "biomeAffinity": 15 },
+    { "id": "tumali", "name": "Тумали", "homeBiome": "barren", "growthPct": 3, "mods": { "mining": 125, "farm": 90 }, "biomeAffinity": 20 },
+    { "id": "gerber", "name": "Герберы", "homeBiome": "toxic", "growthPct": 2, "mods": { "science": 125, "growth": 90 }, "biomeAffinity": 15 }
+  ],
+  "recipes": [
+    { "id": "fuel", "inputs": { "gas": 2 }, "outputs": { "fuel": 1 }, "ipCost": 1 },
+    { "id": "alloys", "inputs": { "metals": 2, "minerals": 1 }, "outputs": { "alloys": 1 }, "ipCost": 1 },
+    { "id": "electronics", "inputs": { "minerals": 2, "gas": 1 }, "outputs": { "electronics": 1 }, "ipCost": 1 },
+    { "id": "composites", "inputs": { "metals": 1, "organics": 1 }, "outputs": { "composites": 1 }, "ipCost": 1 }
+  ],
+  "techs": [
+    { "id": "phys_extraction", "name": "Improved Extraction", "school": "physics", "threshold": 100, "effect": "+15% mining", "bonus": { "mining": 15 } },
+    { "id": "phys_fusion", "name": "Fusion Refinement", "school": "physics", "threshold": 320, "effect": "+15% industry", "bonus": { "industry": 15 } },
+    { "id": "econ_trade", "name": "Trade Networks", "school": "economics", "threshold": 100, "effect": "+20% trade", "bonus": { "trade": 20 } },
+    { "id": "econ_agri", "name": "Agri-Science", "school": "economics", "threshold": 320, "effect": "+15% farming", "bonus": { "farm": 15 } }
+  ]
+}
