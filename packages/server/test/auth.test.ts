@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { loadWorldData, nodeTacticalResolver } from '@pure-galaxy/world-core/node';
 import { GameServer } from '../src/server.js';
-import { AccountStore, MemoryAccountPersistence } from '../src/auth.js';
+import { AccountStore } from '../src/auth.js';
+import { MemoryAccountRepo, MemoryRefreshRepo } from '../src/accounts-repo.js';
 import { MemoryPersistence } from '../src/persistence.js';
 import type { ServerMessage } from '../src/protocol.js';
 
@@ -45,7 +46,8 @@ async function connect(port: number): Promise<TestClient> {
 
 const servers: GameServer[] = [];
 async function makeAuthServer(): Promise<{ server: GameServer; port: number; accounts: AccountStore }> {
-  const accounts = new AccountStore(new MemoryAccountPersistence());
+  const accounts = new AccountStore();
+  await accounts.init();
   const server = new GameServer({ data, resolver, persistence: new MemoryPersistence(), accounts, seed: 7, autoTick: false });
   servers.push(server);
   const port = await server.start(0);
@@ -91,88 +93,102 @@ afterEach(async () => {
   while (servers.length) await servers.pop()!.stop();
 });
 
+async function openStore(): Promise<AccountStore> {
+  const store = new AccountStore();
+  await store.init();
+  return store;
+}
+
 describe('AccountStore (§18.2 auth service)', () => {
-  it('registers, then logs in case-insensitively with the right password', () => {
-    const store = new AccountStore();
-    const reg = store.register('Captain_Sol', 'hunter2pass');
+  it('registers, then logs in case-insensitively with the right password', async () => {
+    const store = await openStore();
+    const reg = await store.register('Captain_Sol', 'hunter2pass');
     expect(reg.ok).toBe(true);
     expect(reg.token).toBeTruthy();
-    const login = store.login('captain_sol', 'hunter2pass');
+    const login = store.login('captain_sol', 'hunter2pass'); // sync (memory mirror)
     expect(login.ok).toBe(true);
     expect(login.account!.id).toBe(reg.account!.id);
   });
 
-  it('rejects a wrong password and an unknown user alike', () => {
-    const store = new AccountStore();
-    store.register('Zara', 'correctpass');
+  it('rejects a wrong password and an unknown user alike', async () => {
+    const store = await openStore();
+    await store.register('Zara', 'correctpass');
     expect(store.login('Zara', 'wrongpass').ok).toBe(false);
     expect(store.login('ghost', 'whatever1').ok).toBe(false);
   });
 
-  it('rejects weak credentials and duplicate usernames', () => {
-    const store = new AccountStore();
-    expect(store.register('ab', 'longenough').ok).toBe(false); // username too short
-    expect(store.register('gooduser', 'short').ok).toBe(false); // password too short
-    expect(store.register('Dup', 'password1').ok).toBe(true);
-    expect(store.register('dup', 'password2').ok).toBe(false); // case-insensitive collision
+  it('rejects weak credentials and duplicate usernames', async () => {
+    const store = await openStore();
+    expect((await store.register('ab', 'longenough')).ok).toBe(false); // username too short
+    expect((await store.register('gooduser', 'short')).ok).toBe(false); // password too short
+    expect((await store.register('Dup', 'password1')).ok).toBe(true);
+    expect((await store.register('dup', 'password2')).ok).toBe(false); // case-insensitive collision
   });
 
-  it('issues verifiable tokens and rejects tampering', () => {
-    const store = new AccountStore();
-    const { token, account } = store.register('Tok', 'password1');
+  it('issues verifiable tokens and rejects tampering', async () => {
+    const store = await openStore();
+    const { token, account } = await store.register('Tok', 'password1');
     expect(store.validateToken(token)!.id).toBe(account!.id);
     expect(store.validateToken(token! + 'x')).toBeNull();
     expect(store.validateToken('garbage')).toBeNull();
     expect(store.validateToken(undefined)).toBeNull();
   });
 
-  it('persists accounts, secret and bindings across a reload', () => {
-    const p = new MemoryAccountPersistence();
-    const s1 = new AccountStore(p);
-    const { token, account } = s1.register('Persist', 'password1');
+  it('persists accounts, secret and bindings across a reload', async () => {
+    const accountRepo = new MemoryAccountRepo();
+    const refreshRepo = new MemoryRefreshRepo();
+    const s1 = new AccountStore(accountRepo, refreshRepo);
+    await s1.init();
+    const { token, account } = await s1.register('Persist', 'password1');
     s1.bindEmpire(account!.id, 'emp2');
-    const s2 = new AccountStore(p); // fresh instance, same store
+    await s1.drain(); // flush the write-behind binding
+
+    const s2 = new AccountStore(accountRepo, refreshRepo); // fresh store, same repos
+    await s2.init();
     expect(s2.validateToken(token)!.id).toBe(account!.id); // signing secret survived
     expect(s2.get(account!.id)!.empireId).toBe('emp2');
   });
 
-  it('rotates refresh tokens and detects replay of a used one', () => {
-    const store = new AccountStore();
-    const { account } = store.register('Rot', 'password1');
-    const raw1 = store.issueRefresh(account!.id);
+  it('rotates refresh tokens and detects replay of a used one', async () => {
+    const store = await openStore();
+    const { account } = await store.register('Rot', 'password1');
+    const raw1 = await store.issueRefresh(account!.id);
 
-    const r1 = store.rotateRefresh(raw1);
+    const r1 = await store.rotateRefresh(raw1);
     expect(r1.ok).toBe(true);
     expect(r1.accountId).toBe(account!.id);
     expect(r1.refresh).toBeTruthy();
     expect(r1.token).toBeTruthy();
 
     // The consumed token can't be rotated again — that's a replay.
-    const replay = store.rotateRefresh(raw1);
+    const replay = await store.rotateRefresh(raw1);
     expect(replay.ok).toBe(false);
     expect(replay.reuse).toBe(true);
 
     // Reuse detection revokes the family, so the successor is dead too.
-    expect(store.rotateRefresh(r1.refresh).ok).toBe(false);
+    expect((await store.rotateRefresh(r1.refresh)).ok).toBe(false);
   });
 
-  it('revokes a refresh session and rejects unknown tokens', () => {
-    const store = new AccountStore();
-    const { account } = store.register('Rev', 'password1');
-    const raw = store.issueRefresh(account!.id);
-    expect(store.revokeRefresh(raw)).toBe(true);
-    expect(store.rotateRefresh(raw).ok).toBe(false);
-    expect(store.rotateRefresh('deadbeef').ok).toBe(false);
-    expect(store.rotateRefresh(undefined).ok).toBe(false);
+  it('revokes a refresh session and rejects unknown tokens', async () => {
+    const store = await openStore();
+    const { account } = await store.register('Rev', 'password1');
+    const raw = await store.issueRefresh(account!.id);
+    expect(await store.revokeRefresh(raw)).toBe(true);
+    expect((await store.rotateRefresh(raw)).ok).toBe(false);
+    expect((await store.rotateRefresh('deadbeef')).ok).toBe(false);
+    expect((await store.rotateRefresh(undefined)).ok).toBe(false);
   });
 
-  it('persists refresh tokens across a reload', () => {
-    const p = new MemoryAccountPersistence();
-    const s1 = new AccountStore(p);
-    const { account } = s1.register('RefPersist', 'password1');
-    const raw = s1.issueRefresh(account!.id);
-    const s2 = new AccountStore(p);
-    expect(s2.rotateRefresh(raw).ok).toBe(true);
+  it('persists refresh tokens across a reload', async () => {
+    const accountRepo = new MemoryAccountRepo();
+    const refreshRepo = new MemoryRefreshRepo();
+    const s1 = new AccountStore(accountRepo, refreshRepo);
+    await s1.init();
+    const { account } = await s1.register('RefPersist', 'password1');
+    const raw = await s1.issueRefresh(account!.id);
+    const s2 = new AccountStore(accountRepo, refreshRepo);
+    await s2.init();
+    expect((await s2.rotateRefresh(raw)).ok).toBe(true);
   });
 });
 

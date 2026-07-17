@@ -4,8 +4,8 @@
  *   PORT=8787 TICK_MS=2000 pnpm --filter @pure-galaxy/server run serve
  *
  * Durable storage (design prompt §18.2) is chosen by environment:
- *   DATABASE_URL  → world (and, absent Redis, auth) in Postgres
- *   REDIS_URL     → auth/refresh sessions in Redis
+ *   DATABASE_URL  → world blob + normalized accounts in Postgres
+ *   REDIS_URL     → refresh sessions in Redis (per-key native TTL)
  * With neither set it falls back to JSON files under .data/ — no DB required.
  * Install `pg` / `redis` for the database adapters.
  */
@@ -13,16 +13,16 @@ import { loadWorldData, nodeTacticalResolver } from '@pure-galaxy/world-core/nod
 import type { WorldState } from '@pure-galaxy/world-core';
 import { GameServer } from '../src/server.js';
 import { FilePersistence, type Persistence } from '../src/persistence.js';
-import { AccountStore, FileAccountPersistence, type AccountPersistence, type AuthState } from '../src/auth.js';
+import { AccountStore } from '../src/auth.js';
 import {
-  KvBlobStore,
-  PgKvStore,
-  RedisKvStore,
-  createKvClient,
-  createSqlClient,
-  type KvClient,
-  type SqlClient,
-} from '../src/storage.js';
+  FileAccountRepo,
+  FileRefreshRepo,
+  PostgresAccountRepo,
+  RedisRefreshRepo,
+  type AccountRepo,
+  type RefreshRepo,
+} from '../src/accounts-repo.js';
+import { KvBlobStore, PgKvStore, createKvClient, createSqlClient, type KvClient, type SqlClient } from '../src/storage.js';
 
 async function main(): Promise<void> {
   const data = loadWorldData();
@@ -30,17 +30,18 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 8787);
   const tickMs = Number(process.env.TICK_MS ?? 2000);
 
-  // Flushes run before client shutdowns; shared clients are closed once.
+  // Shared clients (opened once, closed once); flushes run before closes.
   const flushes: (() => Promise<void>)[] = [];
   const closers: (() => Promise<void>)[] = [];
   let sql: SqlClient | null = null;
   let kv: KvClient | null = null;
+  if (process.env.DATABASE_URL) sql = await createSqlClient(process.env.DATABASE_URL);
+  if (process.env.REDIS_URL) kv = await createKvClient(process.env.REDIS_URL);
 
-  // World → Postgres (ACID) if configured, else a local JSON file.
+  // World → Postgres blob (ACID) if configured, else a local JSON file.
   let worldPersistence: Persistence;
   let worldLabel: string;
-  if (process.env.DATABASE_URL) {
-    sql = await createSqlClient(process.env.DATABASE_URL);
+  if (sql) {
     const blob = new KvBlobStore<WorldState>(new PgKvStore(sql), 'world:current');
     await blob.init();
     worldPersistence = blob;
@@ -51,26 +52,15 @@ async function main(): Promise<void> {
     worldLabel = '.data/world.json';
   }
 
-  // Auth + refresh sessions → Redis if configured, else Postgres, else a file.
-  let accountPersistence: AccountPersistence;
-  let authLabel: string;
-  if (process.env.REDIS_URL) {
-    kv = await createKvClient(process.env.REDIS_URL);
-    const blob = new KvBlobStore<AuthState>(new RedisKvStore(kv), 'auth:state');
-    await blob.init();
-    accountPersistence = blob;
-    authLabel = 'redis[auth:state]';
-    flushes.push(() => blob.flush());
-  } else if (sql) {
-    const blob = new KvBlobStore<AuthState>(new PgKvStore(sql), 'auth:state');
-    await blob.init();
-    accountPersistence = blob;
-    authLabel = 'postgres[auth:state]';
-    flushes.push(() => blob.flush());
-  } else {
-    accountPersistence = new FileAccountPersistence('.data/accounts.json');
-    authLabel = '.data/accounts.json';
-  }
+  // Accounts → Postgres tables; refresh sessions → Redis; else JSON files.
+  const accountRepo: AccountRepo = sql ? new PostgresAccountRepo(sql) : new FileAccountRepo('.data/accounts.json');
+  const refreshRepo: RefreshRepo = kv ? new RedisRefreshRepo(kv) : new FileRefreshRepo('.data/refresh.json');
+  const accounts = new AccountStore(accountRepo, refreshRepo);
+  await accounts.init();
+  flushes.push(() => accounts.drain());
+  const accountLabel = sql ? 'postgres[accounts]' : '.data/accounts.json';
+  const refreshLabel = kv ? 'redis[rt:*]' : '.data/refresh.json';
+
   if (sql) closers.push(() => sql!.end());
   if (kv) closers.push(() => kv!.quit());
 
@@ -78,7 +68,7 @@ async function main(): Promise<void> {
     data,
     resolver,
     persistence: worldPersistence,
-    accounts: new AccountStore(accountPersistence),
+    accounts,
     // Cookie policy: production serves over HTTPS with COOKIE_SECURE=true (and
     // SameSite=None if the API is on a different site than the app). The dev
     // default is insecure so the cookie survives plain-HTTP localhost.
@@ -98,7 +88,7 @@ async function main(): Promise<void> {
   console.log(`  REST:  GET /health, GET /state`);
   console.log(`  auth:  POST /auth/{register,login,refresh,logout}`);
   console.log(`  WS:    ws://localhost:${p}  (join {token}, command, ping)`);
-  console.log(`  store: world → ${worldLabel} · auth → ${authLabel}`);
+  console.log(`  store: world → ${worldLabel} · accounts → ${accountLabel} · refresh → ${refreshLabel}`);
   console.log(`  tick:  every ${tickMs}ms`);
 
   let shuttingDown = false;

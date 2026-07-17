@@ -4,19 +4,20 @@
  * Two-token model, production-shaped:
  *  - a short-lived **access token** — HMAC-signed, stateless, ~15 min — kept in
  *    the client's memory and handed to the WebSocket `join`;
- *  - a long-lived **refresh token** — opaque random, stored server-side as a
- *    hash, delivered to the browser only as an HTTP-only cookie. It is rotated
- *    on every use (a used token can't be replayed) and reuse of an already
- *    rotated token revokes the whole session family — the classic stolen-token
- *    tripwire.
+ *  - a long-lived **refresh token** — opaque random, stored server-side (only
+ *    its hash), delivered to the browser only as an HTTP-only cookie. It is
+ *    rotated on every use and replaying a rotated token revokes the whole
+ *    session family — the stolen-token tripwire.
  *
- * No external dependencies: scrypt for passwords, node:crypto HMAC for access
- * tokens, sha256 for refresh-token storage. Persistence mirrors the world's
- * pluggable pattern (memory + file); production would back it with Postgres.
+ * Durable storage is delegated to two repositories (see `accounts-repo.ts`):
+ * accounts + signing secret to `AccountRepo` (Postgres), refresh sessions to
+ * `RefreshRepo` (Redis, with native per-key TTL). Accounts are mirrored in
+ * memory so the hot WebSocket path — access-token validation and empire
+ * binding — stays synchronous; only the async REST handlers touch the refresh
+ * store. Password hashing is scrypt; no external dependencies.
  */
 import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import { MemoryAccountRepo, MemoryRefreshRepo, type AccountRepo, type RefreshRepo } from './accounts-repo.js';
 
 export interface Account {
   id: string;
@@ -28,51 +29,14 @@ export interface Account {
   createdAt: number;
 }
 
-/** A stored refresh token — only its hash is persisted, never the raw value. */
+/** A stored refresh token — only its hash is ever persisted. */
 export interface RefreshRecord {
   hash: string; // sha256(rawToken) hex
   accountId: string;
   family: string; // session id; rotation stays within one family
   expiresAt: number;
-  rotated: boolean; // consumed by a successful rotation (replay ⇒ theft)
-  revoked: boolean; // explicitly killed (logout / reuse detection)
-}
-
-export interface AuthState {
-  secret: string; // hex — HMAC signing key for access tokens
-  accounts: Account[];
-  refresh: RefreshRecord[];
-}
-
-export interface AccountPersistence {
-  load(): AuthState | null;
-  save(state: AuthState): void;
-}
-
-export class MemoryAccountPersistence implements AccountPersistence {
-  private data: string | null = null;
-  load(): AuthState | null {
-    return this.data ? (JSON.parse(this.data) as AuthState) : null;
-  }
-  save(state: AuthState): void {
-    this.data = JSON.stringify(state);
-  }
-}
-
-export class FileAccountPersistence implements AccountPersistence {
-  constructor(private readonly file: string) {}
-  load(): AuthState | null {
-    if (!existsSync(this.file)) return null;
-    try {
-      return JSON.parse(readFileSync(this.file, 'utf8')) as AuthState;
-    } catch {
-      return null;
-    }
-  }
-  save(state: AuthState): void {
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(state));
-  }
+  rotated: boolean; // consumed by a rotation (replay ⇒ theft)
+  revoked: boolean;
 }
 
 const SCRYPT_KEYLEN = 32;
@@ -113,42 +77,42 @@ function sha256(s: string): string {
 }
 
 export class AccountStore {
-  private secret: Buffer;
-  private readonly accounts = new Map<string, Account>(); // id -> account
+  private secret: Buffer = Buffer.alloc(0);
+  private readonly accounts = new Map<string, Account>(); // id -> account (mirror)
   private readonly byName = new Map<string, string>(); // usernameLower -> id
-  private readonly refresh = new Map<string, RefreshRecord>(); // hash -> record
+  private readonly writes = new Set<Promise<unknown>>(); // in-flight write-behind
   private nextId = 1;
 
-  constructor(private readonly persistence: AccountPersistence = new MemoryAccountPersistence()) {
-    const loaded = this.persistence.load();
-    if (loaded) {
-      this.secret = Buffer.from(loaded.secret, 'hex');
-      for (const a of loaded.accounts) {
-        this.accounts.set(a.id, a);
-        this.byName.set(a.usernameLower, a.id);
-        const n = Number(a.id.replace(/\D/g, ''));
-        if (Number.isFinite(n) && n >= this.nextId) this.nextId = n + 1;
-      }
-      for (const r of loaded.refresh ?? []) this.refresh.set(r.hash, r);
+  constructor(
+    private readonly accountRepo: AccountRepo = new MemoryAccountRepo(),
+    private readonly refreshRepo: RefreshRepo = new MemoryRefreshRepo(),
+  ) {}
+
+  /** Load accounts + signing secret into the in-memory mirror. Must be awaited
+   *  before the store serves requests. */
+  async init(): Promise<void> {
+    await this.accountRepo.init();
+    await this.refreshRepo.init();
+    const { secret, accounts } = await this.accountRepo.loadAll();
+    if (secret) {
+      this.secret = Buffer.from(secret, 'hex');
     } else {
       this.secret = randomBytes(32);
-      this.flush();
+      await this.accountRepo.saveSecret(this.secret.toString('hex'));
     }
-  }
-
-  private flush(): void {
-    this.persistence.save({
-      secret: this.secret.toString('hex'),
-      accounts: [...this.accounts.values()],
-      refresh: [...this.refresh.values()],
-    });
+    for (const a of accounts) {
+      this.accounts.set(a.id, a);
+      this.byName.set(a.usernameLower, a.id);
+      const n = Number(a.id.replace(/\D/g, ''));
+      if (Number.isFinite(n) && n >= this.nextId) this.nextId = n + 1;
+    }
   }
 
   private hash(password: string, salt: Buffer): Buffer {
     return scryptSync(password, salt, SCRYPT_KEYLEN);
   }
 
-  register(username: string, password: string): AuthResult {
+  async register(username: string, password: string): Promise<AuthResult> {
     const name = (username ?? '').trim();
     if (!USERNAME_RE.test(name)) return { ok: false, error: 'username must be 3–20 letters, digits or underscore' };
     if ((password ?? '').length < MIN_PASSWORD) return { ok: false, error: `password must be at least ${MIN_PASSWORD} characters` };
@@ -165,12 +129,22 @@ export class AccountStore {
       empireId: null,
       createdAt: Date.now(),
     };
+    // Reserve in the mirror synchronously so two concurrent registrations of the
+    // same name can't both pass the uniqueness check across the await below.
     this.accounts.set(account.id, account);
     this.byName.set(lower, account.id);
-    this.flush();
+    try {
+      await this.accountRepo.upsertAccount(account);
+    } catch (err) {
+      this.accounts.delete(account.id);
+      this.byName.delete(lower);
+      console.error('[auth] failed persisting account', err);
+      return { ok: false, error: 'storage unavailable' };
+    }
     return { ok: true, account, token: this.issueToken(account.id) };
   }
 
+  /** Synchronous: only reads the in-memory mirror. */
   login(username: string, password: string): AuthResult {
     const id = this.byName.get((username ?? '').trim().toLowerCase());
     const account = id ? this.accounts.get(id) : undefined;
@@ -211,11 +185,9 @@ export class AccountStore {
     return this.accounts.get(accountId) ?? null;
   }
 
-  // --- Refresh tokens (server-side, rotating) ---
+  // --- Refresh tokens (server-side, rotating; async) ---
 
-  /** Mint a refresh token (raw returned once; only its hash is stored). */
-  issueRefresh(accountId: string, family?: string): string {
-    this.pruneExpired();
+  async issueRefresh(accountId: string, family?: string): Promise<string> {
     const raw = randomBytes(32).toString('hex');
     const rec: RefreshRecord = {
       hash: sha256(raw),
@@ -225,48 +197,32 @@ export class AccountStore {
       rotated: false,
       revoked: false,
     };
-    this.refresh.set(rec.hash, rec);
-    this.flush();
+    await this.refreshRepo.put(rec, Math.ceil(REFRESH_TTL_MS / 1000));
     return raw;
   }
 
-  /** Rotate a refresh token: validate, retire it, and issue its successor.
-   *  Replaying an already-rotated token trips reuse detection and revokes the
-   *  entire family (every token minted in that login session). */
-  rotateRefresh(raw: string | undefined): RefreshResult {
+  async rotateRefresh(raw: string | undefined): Promise<RefreshResult> {
     if (!raw) return { ok: false };
-    const rec = this.refresh.get(sha256(raw));
-    if (!rec || rec.revoked || rec.expiresAt < Date.now()) return { ok: false };
+    const rec = await this.refreshRepo.get(sha256(raw)); // null once its TTL lapses
+    if (!rec || rec.revoked) return { ok: false };
     if (rec.rotated) {
-      this.revokeFamily(rec.family);
-      this.flush();
+      await this.refreshRepo.revokeFamily(rec.family); // replay of a used token ⇒ kill the session
       return { ok: false, reuse: true };
     }
-    rec.rotated = true;
-    const next = this.issueRefresh(rec.accountId, rec.family); // flushes
+    await this.refreshRepo.markRotated(rec.hash);
+    const next = await this.issueRefresh(rec.accountId, rec.family);
     return { ok: true, accountId: rec.accountId, refresh: next, token: this.issueToken(rec.accountId) };
   }
 
-  /** Revoke the session behind a refresh token (used on logout). */
-  revokeRefresh(raw: string | undefined): boolean {
+  async revokeRefresh(raw: string | undefined): Promise<boolean> {
     if (!raw) return false;
-    const rec = this.refresh.get(sha256(raw));
+    const rec = await this.refreshRepo.get(sha256(raw));
     if (!rec) return false;
-    this.revokeFamily(rec.family);
-    this.flush();
+    await this.refreshRepo.revokeFamily(rec.family);
     return true;
   }
 
-  private revokeFamily(family: string): void {
-    for (const r of this.refresh.values()) if (r.family === family) r.revoked = true;
-  }
-
-  private pruneExpired(): void {
-    const now = Date.now();
-    for (const [hash, r] of this.refresh) if (r.expiresAt < now) this.refresh.delete(hash);
-  }
-
-  // --- Accounts / empire binding ---
+  // --- Accounts / empire binding (synchronous mirror + write-behind) ---
 
   get(accountId: string): Account | null {
     return this.accounts.get(accountId) ?? null;
@@ -274,10 +230,9 @@ export class AccountStore {
 
   bindEmpire(accountId: string, empireId: string): void {
     const a = this.accounts.get(accountId);
-    if (a) {
-      a.empireId = empireId;
-      this.flush();
-    }
+    if (!a) return;
+    a.empireId = empireId;
+    this.track(this.accountRepo.upsertAccount(a)); // durable, non-blocking
   }
 
   /** Empires already owned by some account (so we never hand one out twice). */
@@ -289,5 +244,22 @@ export class AccountStore {
 
   get size(): number {
     return this.accounts.size;
+  }
+
+  private track(p: Promise<unknown>): void {
+    const q = p.catch((err) => console.error('[auth] write-behind failed', err));
+    this.writes.add(q);
+    void q.finally(() => this.writes.delete(q));
+  }
+
+  /** Await outstanding write-behind persists (graceful shutdown / tests). */
+  async drain(): Promise<void> {
+    await Promise.all([...this.writes]);
+  }
+
+  async close(): Promise<void> {
+    await this.drain();
+    await this.accountRepo.close();
+    await this.refreshRepo.close();
   }
 }

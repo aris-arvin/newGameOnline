@@ -24,10 +24,17 @@ export interface SqlClient {
   end(): Promise<void>;
 }
 
+export interface KvSetOptions {
+  ttlSec?: number; // set an expiry (Redis EX)
+  keepTtl?: boolean; // preserve the existing expiry (Redis KEEPTTL)
+}
 export interface KvClient {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
-  del(key: string): Promise<void>;
+  set(key: string, value: string, opts?: KvSetOptions): Promise<void>;
+  del(...keys: string[]): Promise<void>;
+  sadd(key: string, member: string): Promise<void>;
+  smembers(key: string): Promise<string[]>;
+  expire(key: string, ttlSec: number): Promise<void>;
   quit(): Promise<void>;
 }
 
@@ -188,37 +195,65 @@ export async function createKvClient(url: string): Promise<KvClient> {
   const client = createClient({ url }) as {
     connect: () => Promise<void>;
     get: (k: string) => Promise<string | null>;
-    set: (k: string, v: string) => Promise<unknown>;
-    del: (k: string) => Promise<unknown>;
+    set: (k: string, v: string, opts?: Record<string, unknown>) => Promise<unknown>;
+    del: (keys: string[]) => Promise<unknown>;
+    sAdd: (k: string, m: string) => Promise<unknown>;
+    sMembers: (k: string) => Promise<string[]>;
+    expire: (k: string, s: number) => Promise<unknown>;
     quit: () => Promise<unknown>;
   };
   await client.connect();
   return {
     get: (k) => client.get(k),
-    set: (k, v) => client.set(k, v).then(() => undefined),
-    del: (k) => client.del(k).then(() => undefined),
+    set: (k, v, opts) => {
+      const o: Record<string, unknown> = {};
+      if (opts?.ttlSec != null) o.EX = opts.ttlSec;
+      if (opts?.keepTtl) o.KEEPTTL = true;
+      return client.set(k, v, o).then(() => undefined);
+    },
+    del: (...keys) => (keys.length ? client.del(keys).then(() => undefined) : Promise.resolve()),
+    sadd: (k, m) => client.sAdd(k, m).then(() => undefined),
+    smembers: (k) => client.sMembers(k),
+    expire: (k, s) => client.expire(k, s).then(() => undefined),
     quit: () => client.quit().then(() => undefined),
   };
 }
 
 // --- In-memory fakes (tests, and a dependency-free local option) -------------
 
-/** In-memory SqlClient understanding just the PgKvStore statements. */
+/**
+ * In-memory SqlClient that recognises the statements our stores/repos issue
+ * (the `pg_kv` blob table, plus the normalized `accounts` / `auth_meta`
+ * tables). It exercises the real SQL/param mapping without a live Postgres.
+ */
 export class FakeSql implements SqlClient {
-  readonly rows = new Map<string, string>();
+  readonly kv = new Map<string, string>();
+  readonly accounts = new Map<string, SqlRow>();
+  readonly meta = new Map<string, string>();
   queries = 0;
 
   async query<R extends SqlRow = SqlRow>(text: string, params: unknown[] = []): Promise<{ rows: R[] }> {
     this.queries++;
-    const sql = text.trim().toUpperCase();
-    if (sql.startsWith('CREATE TABLE')) return { rows: [] };
-    if (sql.startsWith('INSERT INTO')) {
-      this.rows.set(String(params[0]), String(params[1]));
-      return { rows: [] };
-    }
-    if (sql.startsWith('SELECT')) {
-      const v = this.rows.get(String(params[0]));
+    const t = text.trim();
+    if (/^CREATE TABLE/i.test(t)) return { rows: [] };
+
+    if (/\bpg_kv\b/i.test(t)) {
+      if (/^INSERT/i.test(t)) return (this.kv.set(String(params[0]), String(params[1])), { rows: [] });
+      const v = this.kv.get(String(params[0]));
       return { rows: (v != null ? [{ v }] : []) as unknown as R[] };
+    }
+    if (/\bauth_meta\b/i.test(t)) {
+      if (/^INSERT/i.test(t)) return (this.meta.set(String(params[0]), String(params[1])), { rows: [] });
+      const v = this.meta.get(String(params[0]));
+      return { rows: (v != null ? [{ v }] : []) as unknown as R[] };
+    }
+    if (/\baccounts\b/i.test(t)) {
+      if (/^INSERT/i.test(t)) {
+        const [id, username, username_lower, salt, password_hash, empire_id, created_at] = params;
+        this.accounts.set(String(id), { id, username, username_lower, salt, password_hash, empire_id: empire_id ?? null, created_at });
+        return { rows: [] };
+      }
+      return { rows: [...this.accounts.values()] as unknown as R[] };
     }
     return { rows: [] };
   }
@@ -227,19 +262,62 @@ export class FakeSql implements SqlClient {
   }
 }
 
-/** In-memory KvClient. */
+/**
+ * In-memory KvClient emulating the Redis features the refresh repo relies on:
+ * string values with lazy TTL expiry, and sets (for family membership).
+ */
 export class FakeKv implements KvClient {
-  readonly map = new Map<string, string>();
+  private readonly strings = new Map<string, string>();
+  private readonly sets = new Map<string, Set<string>>();
+  private readonly expiry = new Map<string, number>(); // key -> epoch ms
+
+  private alive(key: string): boolean {
+    const e = this.expiry.get(key);
+    if (e != null && e <= Date.now()) {
+      this.strings.delete(key);
+      this.sets.delete(key);
+      this.expiry.delete(key);
+      return false;
+    }
+    return true;
+  }
+
   async get(key: string): Promise<string | null> {
-    return this.map.has(key) ? this.map.get(key)! : null;
+    return this.alive(key) && this.strings.has(key) ? this.strings.get(key)! : null;
   }
-  async set(key: string, value: string): Promise<void> {
-    this.map.set(key, value);
+  async set(key: string, value: string, opts?: KvSetOptions): Promise<void> {
+    this.alive(key);
+    this.strings.set(key, value);
+    if (opts?.ttlSec != null) this.expiry.set(key, Date.now() + opts.ttlSec * 1000);
+    else if (!opts?.keepTtl) this.expiry.delete(key);
   }
-  async del(key: string): Promise<void> {
-    this.map.delete(key);
+  async del(...keys: string[]): Promise<void> {
+    for (const k of keys) {
+      this.strings.delete(k);
+      this.sets.delete(k);
+      this.expiry.delete(k);
+    }
+  }
+  async sadd(key: string, member: string): Promise<void> {
+    this.alive(key);
+    let s = this.sets.get(key);
+    if (!s) this.sets.set(key, (s = new Set()));
+    s.add(member);
+  }
+  async smembers(key: string): Promise<string[]> {
+    return this.alive(key) ? [...(this.sets.get(key) ?? [])] : [];
+  }
+  async expire(key: string, ttlSec: number): Promise<void> {
+    if (this.strings.has(key) || this.sets.has(key)) this.expiry.set(key, Date.now() + ttlSec * 1000);
   }
   async quit(): Promise<void> {
     /* no-op */
+  }
+
+  /** Test helper: how many live string keys exist. */
+  liveKeys(): number {
+    let n = 0;
+    for (const k of this.strings.keys()) if (this.alive(k)) n++;
+    return n;
   }
 }

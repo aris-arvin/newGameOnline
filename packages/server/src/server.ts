@@ -459,7 +459,7 @@ export class GameServer {
       }
       const result =
         url === '/auth/register'
-          ? this.accounts.register(creds.username ?? '', creds.password ?? '')
+          ? await this.accounts.register(creds.username ?? '', creds.password ?? '')
           : this.accounts.login(creds.username ?? '', creds.password ?? '');
       if (!result.ok || !result.account) {
         res.statusCode = url === '/auth/register' ? 409 : 401;
@@ -468,7 +468,7 @@ export class GameServer {
       }
       // Long-lived refresh token → HTTP-only cookie; short-lived access token
       // → response body (the client keeps it in memory only).
-      this.setRefreshCookie(res, this.accounts.issueRefresh(result.account.id));
+      this.setRefreshCookie(res, await this.accounts.issueRefresh(result.account.id));
       res.end(JSON.stringify({ ok: true, accessToken: result.token, account: publicAccount(result.account) }));
       return;
     }
@@ -476,7 +476,7 @@ export class GameServer {
     // Silent session resume: rotate the refresh cookie, mint a fresh access token.
     if (this.accounts && method === 'POST' && url === '/auth/refresh') {
       const raw = this.parseCookies(req)[this.cookie.name];
-      const r = this.accounts.rotateRefresh(raw);
+      const r = await this.accounts.rotateRefresh(raw);
       if (!r.ok || !r.accountId) {
         this.clearRefreshCookie(res); // drop a stale/compromised cookie
         res.statusCode = 401;
@@ -490,7 +490,7 @@ export class GameServer {
     }
 
     if (this.accounts && method === 'POST' && url === '/auth/logout') {
-      this.accounts.revokeRefresh(this.parseCookies(req)[this.cookie.name]);
+      await this.accounts.revokeRefresh(this.parseCookies(req)[this.cookie.name]);
       this.clearRefreshCookie(res);
       res.statusCode = 204;
       res.end();
