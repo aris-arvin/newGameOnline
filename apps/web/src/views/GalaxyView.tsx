@@ -1,53 +1,35 @@
 import { useMemo, useState } from 'react';
 import { habitability } from '@pure-galaxy/world-core';
-import type { WorldState } from '@pure-galaxy/world-core';
+import type { Planet } from '@pure-galaxy/world-core';
 import { worldData, empireColor } from '../engine';
+import type { EmpireInfo, GalaxyDto, Ownership } from '../model';
 
 const REF_RACE = worldData.races.find((r) => r.id === 'sol')!;
 
-export function GalaxyView({ world }: { world: WorldState }) {
+export function GalaxyView({ galaxy, ownership, empires }: { galaxy: GalaxyDto; ownership: Ownership; empires: EmpireInfo[] }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const nameById = useMemo(() => Object.fromEntries(empires.map((e) => [e.id, e.name])), [empires]);
+  const systemById = useMemo(() => Object.fromEntries(galaxy.systems.map((s) => [s.id, s])), [galaxy]);
 
-  // Which empire (if any) owns each system, by its first colony there.
-  const ownerBySystem = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const c of Object.values(world.colonies)) {
-      const sys = world.galaxy.planets[c.planetId]?.systemId;
-      if (sys && !(sys in m)) m[sys] = c.empireId;
-    }
-    return m;
-    // recompute whenever the world advances
-  }, [world, world.time]);
+  const lanes = useMemo(
+    () =>
+      galaxy.lanes
+        .map((l) => ({ a: systemById[l.from], b: systemById[l.to] }))
+        .filter((l) => l.a && l.b),
+    [galaxy, systemById],
+  );
 
-  const systems = Object.values(world.galaxy.systems);
-
-  const lanes = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { x1: number; y1: number; x2: number; y2: number }[] = [];
-    for (const [from, ls] of Object.entries(world.galaxy.lanes)) {
-      for (const lane of ls) {
-        const key = from < lane.to ? `${from}|${lane.to}` : `${lane.to}|${from}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const a = world.galaxy.systems[from];
-        const b = world.galaxy.systems[lane.to];
-        if (a && b) out.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
-      }
-    }
-    return out;
-  }, [world]);
-
-  const sel = selected ? world.galaxy.systems[selected] : null;
+  const sel = selected ? systemById[selected] : null;
 
   return (
     <div className="galaxy-wrap">
       <svg className="galaxy" viewBox="-40 -40 1080 1080" role="img" aria-label="Galaxy map">
         {lanes.map((l, i) => (
-          <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="#26304a" strokeWidth={1.2} />
+          <line key={i} x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y} stroke="#26304a" strokeWidth={1.2} />
         ))}
-        {systems.map((s) => {
-          const owner = ownerBySystem[s.id];
-          const r = 5 + Math.min(5, s.planetIds.length);
+        {galaxy.systems.map((s) => {
+          const owner = ownership[s.id];
+          const r = 5 + Math.min(5, s.planets.length);
           return (
             <g key={s.id}>
               <circle
@@ -82,17 +64,17 @@ export function GalaxyView({ world }: { world: WorldState }) {
               <span>{sel.sectorId}</span>
               <span className="k">Owner</span>
               <span>
-                {ownerBySystem[sel.id] ? (
+                {ownership[sel.id] ? (
                   <>
-                    <span className="dot" style={{ background: empireColor(ownerBySystem[sel.id]) }} />
-                    {world.empires[ownerBySystem[sel.id]]?.name ?? ownerBySystem[sel.id]}
+                    <span className="dot" style={{ background: empireColor(ownership[sel.id]) }} />
+                    {nameById[ownership[sel.id]] ?? ownership[sel.id]}
                   </>
                 ) : (
                   <span className="muted">unclaimed</span>
                 )}
               </span>
             </div>
-            <h3 style={{ marginTop: 14 }}>Planets ({sel.planetIds.length})</h3>
+            <h3 style={{ marginTop: 14 }}>Planets ({sel.planets.length})</h3>
             <table>
               <thead>
                 <tr>
@@ -104,11 +86,10 @@ export function GalaxyView({ world }: { world: WorldState }) {
                 </tr>
               </thead>
               <tbody>
-                {sel.planetIds.map((pid) => {
-                  const p = world.galaxy.planets[pid];
-                  const hab = habitability(p, REF_RACE, worldData);
+                {sel.planets.map((p) => {
+                  const hab = habitability(p as unknown as Planet, REF_RACE, worldData);
                   return (
-                    <tr key={pid}>
+                    <tr key={p.id}>
                       <td>
                         {p.name}
                         {p.ruins ? <span className="pill" style={{ marginLeft: 6 }}>ruins</span> : null}

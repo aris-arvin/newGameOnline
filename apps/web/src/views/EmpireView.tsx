@@ -1,11 +1,11 @@
-import type { WorldState } from '@pure-galaxy/world-core';
-import { spectateSnapshot, worldData, empireColor } from '../engine';
+import { useMemo } from 'react';
+import type { Snapshot } from '@pure-galaxy/world-core';
+import { empireColor } from '../engine';
+import type { EmpireInfo, Society } from '../model';
 
-export function EmpireView({ world }: { world: WorldState }) {
-  const snap = spectateSnapshot(world, worldData);
-  const idByName: Record<string, string> = {};
-  for (const id of Object.keys(world.empires)) idByName[world.empires[id].name] = id;
-  const lastReso = world.senate.resolutionLog[world.senate.resolutionLog.length - 1];
+export function EmpireView({ snapshot, society, empires }: { snapshot: Snapshot; society: Society; empires: EmpireInfo[] }) {
+  const snap = snapshot;
+  const idByName = useMemo(() => Object.fromEntries(empires.map((e) => [e.name, e.id])), [empires]);
 
   return (
     <>
@@ -63,11 +63,6 @@ export function EmpireView({ world }: { world: WorldState }) {
               <span className="k">Streak</span>
               <span>{snap.senate.streak} {snap.senate.streak >= 2 ? <span className="good">(win)</span> : null}</span>
             </div>
-            {lastReso && (
-              <p className="muted" style={{ marginTop: 10 }}>
-                Last resolution: <b>{lastReso.type}</b> — {lastReso.passed ? <span className="good">passed</span> : <span className="bad">failed</span>}
-              </p>
-            )}
           </div>
 
           <div className="panel">
@@ -88,11 +83,11 @@ export function EmpireView({ world }: { world: WorldState }) {
             <h3>Society</h3>
             <div className="kv">
               <span className="k">Treaties</span>
-              <span>{world.treaties.length}</span>
+              <span>{society.treaties}</span>
               <span className="k">Active agents</span>
-              <span>{Object.keys(world.agents).length}</span>
+              <span>{society.agents}</span>
               <span className="k">Admirals</span>
-              <span>{Object.keys(world.admirals).length}</span>
+              <span>{society.admirals}</span>
               <span className="k">Galaxy</span>
               <span>
                 {snap.galaxy.sectors} sectors · {snap.galaxy.systems} systems · {snap.galaxy.planets} planets

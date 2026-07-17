@@ -15,7 +15,7 @@ import { createWorld, tick, startNextSeason, spectateSnapshot } from '@pure-gala
 import type { BattleResolver, WorldData, WorldState } from '@pure-galaxy/world-core';
 import { COMMANDS } from './commands.js';
 import { MemoryPersistence, type Persistence } from './persistence.js';
-import type { ClientMessage, MineView, ServerMessage } from './protocol.js';
+import type { ClientMessage, EmpireInfo, GalaxyDto, MineView, Ownership, ServerMessage, Society } from './protocol.js';
 
 export interface GameServerOptions {
   data: WorldData;
@@ -49,6 +49,7 @@ export class GameServer {
   private readonly claimed = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticksSinceSave = 0;
+  private galaxyCache: { token: number; dto: GalaxyDto } | null = null;
 
   constructor(options: GameServerOptions) {
     this.data = options.data;
@@ -114,6 +115,7 @@ export class GameServer {
     if (this.world.season.status === 'ended') {
       this.world = startNextSeason(this.world, this.data);
       this.persistence.save(this.world);
+      this.broadcastMessage({ type: 'lobby', galaxy: this.galaxyDto(), empires: this.empireRoster() });
       this.broadcastMessage({ type: 'event', time: this.world.time, kind: 'season', text: `Season ${this.world.season.number} begins` });
     }
 
@@ -137,6 +139,10 @@ export class GameServer {
       season: this.world.season.number,
       public: spectateSnapshot(this.world, this.data),
       mine: null,
+      galaxy: this.galaxyDto(),
+      empires: this.empireRoster(),
+      ownership: this.ownership(),
+      society: this.society(),
     });
   }
 
@@ -174,6 +180,10 @@ export class GameServer {
         season: this.world.season.number,
         public: spectateSnapshot(this.world, this.data),
         mine: empireId ? this.myView(empireId) : null,
+        galaxy: this.galaxyDto(),
+        empires: this.empireRoster(),
+        ownership: this.ownership(),
+        society: this.society(),
       });
       return;
     }
@@ -191,7 +201,14 @@ export class GameServer {
       const result = handler({ world: this.world, data: this.data, empireId: state.empireId, args: msg.args ?? {} });
       this.send(ws, { type: 'ack', name: msg.name, ok: result.ok, message: result.message });
       // Reflect the mutation immediately for the acting player.
-      this.send(ws, { type: 'snapshot', tick: this.world.time, public: spectateSnapshot(this.world, this.data), mine: this.myView(state.empireId) });
+      this.send(ws, {
+        type: 'snapshot',
+        tick: this.world.time,
+        public: spectateSnapshot(this.world, this.data),
+        mine: this.myView(state.empireId),
+        ownership: this.ownership(),
+        society: this.society(),
+      });
     }
   }
 
@@ -209,6 +226,60 @@ export class GameServer {
       }
     }
     return null; // spectator
+  }
+
+  /** Public galaxy structure, cached per season (it only changes on restart). */
+  private galaxyDto(): GalaxyDto {
+    if (this.galaxyCache && this.galaxyCache.token === this.world.season.number) return this.galaxyCache.dto;
+    const g = this.world.galaxy;
+    const systems = Object.values(g.systems).map((s) => ({
+      id: s.id,
+      name: s.name,
+      sectorId: s.sectorId,
+      x: s.x,
+      y: s.y,
+      planets: s.planetIds.map((pid) => {
+        const p = g.planets[pid];
+        return { id: p.id, name: p.name, biome: p.biome, gravity: p.gravity, size: p.size, richness: p.richness, belt: p.belt, ruins: p.ruins };
+      }),
+    }));
+    const seen = new Set<string>();
+    const lanes: { from: string; to: string }[] = [];
+    for (const [from, ls] of Object.entries(g.lanes)) {
+      for (const lane of ls) {
+        const key = from < lane.to ? `${from}|${lane.to}` : `${lane.to}|${from}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        lanes.push({ from, to: lane.to });
+      }
+    }
+    const dto: GalaxyDto = { systems, lanes };
+    this.galaxyCache = { token: this.world.season.number, dto };
+    return dto;
+  }
+
+  private empireRoster(): EmpireInfo[] {
+    return Object.keys(this.world.empires)
+      .filter((id) => !this.world.empires[id].pirate && !this.world.empires[id].ancient)
+      .sort()
+      .map((id) => ({ id, name: this.world.empires[id].name }));
+  }
+
+  private ownership(): Ownership {
+    const m: Ownership = {};
+    for (const c of Object.values(this.world.colonies)) {
+      const sys = this.world.galaxy.planets[c.planetId]?.systemId;
+      if (sys && !(sys in m)) m[sys] = c.empireId;
+    }
+    return m;
+  }
+
+  private society(): Society {
+    return {
+      treaties: this.world.treaties.length,
+      agents: Object.keys(this.world.agents).length,
+      admirals: Object.keys(this.world.admirals).length,
+    };
   }
 
   private myView(empireId: string): MineView {
@@ -244,9 +315,18 @@ export class GameServer {
 
   private broadcastSnapshots(): void {
     const pub = spectateSnapshot(this.world, this.data);
+    const own = this.ownership();
+    const soc = this.society();
     for (const [ws, state] of this.clients) {
       if (ws.readyState !== WebSocket.OPEN) continue;
-      this.send(ws, { type: 'snapshot', tick: this.world.time, public: pub, mine: state.empireId ? this.myView(state.empireId) : null });
+      this.send(ws, {
+        type: 'snapshot',
+        tick: this.world.time,
+        public: pub,
+        mine: state.empireId ? this.myView(state.empireId) : null,
+        ownership: own,
+        society: soc,
+      });
     }
   }
 
