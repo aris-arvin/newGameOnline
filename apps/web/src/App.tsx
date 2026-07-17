@@ -4,10 +4,13 @@ import type { WorldState } from './engine';
 import { localGameView } from './model';
 import type { GameView } from './model';
 import { LiveClient } from './net';
+import { clearSession, loadSession, saveSession } from './auth';
+import type { Session } from './auth';
 import { GalaxyView } from './views/GalaxyView';
 import { EmpireView } from './views/EmpireView';
 import { ShipLab } from './views/ShipLab';
 import { MinePanel } from './views/MinePanel';
+import { AuthPanel } from './views/AuthPanel';
 
 type Tab = 'galaxy' | 'empire' | 'mine' | 'lab';
 type Mode = 'local' | 'live';
@@ -32,16 +35,29 @@ export function App() {
   const [, bump] = useState(0);
   const rerender = () => bump((v) => v + 1);
 
-  // --- Live client ---
+  // --- Live client + session ---
   const clientRef = useRef<LiveClient | null>(null);
   if (!clientRef.current) clientRef.current = new LiveClient();
   const client = clientRef.current;
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS);
+  const [session, setSession] = useState<Session | null>(() => loadSession());
 
   useEffect(() => client.subscribe(rerender), [client]);
   useEffect(() => {
     if (mode !== 'live') client.disconnect();
   }, [mode, client]);
+
+  const onAuthed = (s: Session) => {
+    saveSession(s);
+    setSession(s);
+    client.connect(wsUrl, s.token);
+  };
+  const logout = () => {
+    client.disconnect();
+    clearSession();
+    setSession(null);
+    if (tab === 'mine') setTab('galaxy');
+  };
 
   const step = (n: number) => {
     advance(worldRef.current, n);
@@ -54,6 +70,7 @@ export function App() {
 
   // Both modes converge on a single GameView; the views never learn which won.
   const view: GameView | null = mode === 'local' ? localGameView(worldRef.current) : client.view;
+  const showAuthGate = mode === 'live' && !session;
 
   const clock = view ? view.snapshot.time : 0;
   const season = view ? view.snapshot.season : 0;
@@ -124,44 +141,58 @@ export function App() {
           </>
         ) : (
           <>
-            <input className="ws-url" type="text" value={wsUrl} onChange={(e) => setWsUrl(e.target.value)} />
-            {client.status === 'connected' ? (
-              <button className="btn" onClick={() => client.disconnect()}>
-                Disconnect
-              </button>
+            <input
+              className="ws-url"
+              type="text"
+              value={wsUrl}
+              onChange={(e) => setWsUrl(e.target.value)}
+              disabled={client.status === 'connected'}
+            />
+            {!session ? (
+              <span className="muted">log in to play →</span>
             ) : (
-              <button className="btn primary" onClick={() => client.connect(wsUrl)}>
-                Connect
-              </button>
+              <>
+                {client.status === 'connected' ? (
+                  <button className="btn" onClick={() => client.disconnect()}>
+                    Disconnect
+                  </button>
+                ) : (
+                  <button className="btn primary" onClick={() => client.connect(wsUrl, session.token)}>
+                    Connect
+                  </button>
+                )}
+                <span className={`conn conn-${client.status}`}>{STATUS_LABEL[client.status] ?? client.status}</span>
+                <span className="badge">@{client.username ?? session.username}</span>
+                {client.empireId ? (
+                  <span className="badge">empire {client.empireId}</span>
+                ) : client.status === 'connected' ? (
+                  <span className="badge muted">spectator</span>
+                ) : null}
+                <button className="btn" onClick={logout}>
+                  Log out
+                </button>
+              </>
             )}
-            <span className={`conn conn-${client.status}`}>{STATUS_LABEL[client.status] ?? client.status}</span>
-            {client.empireId ? (
-              <span className="badge">empire {client.empireId}</span>
-            ) : client.status === 'connected' ? (
-              <span className="badge muted">spectator</span>
-            ) : null}
             {client.lastError && <span className="bad">{client.lastError}</span>}
           </>
         )}
       </div>
 
       <main>
-        {!view ? (
+        {showAuthGate ? (
+          <AuthPanel wsUrl={wsUrl} onAuthed={onAuthed} />
+        ) : !view ? (
           <div className="panel">
             <h3>Not connected</h3>
             <p className="muted">
-              Start the server (<code>pnpm --filter @pure-galaxy/server run serve</code>) and press Connect to join a
-              live galaxy, or switch to Local to run the simulation in your browser.
+              Press Connect to join the live galaxy as <b>@{session?.username}</b>, or switch to Local to run the
+              simulation in your browser.
             </p>
           </div>
         ) : (
           <>
-            {tab === 'galaxy' && (
-              <GalaxyView galaxy={view.galaxy} ownership={view.ownership} empires={view.empires} />
-            )}
-            {tab === 'empire' && (
-              <EmpireView snapshot={view.snapshot} society={view.society} empires={view.empires} />
-            )}
+            {tab === 'galaxy' && <GalaxyView galaxy={view.galaxy} ownership={view.ownership} empires={view.empires} />}
+            {tab === 'empire' && <EmpireView snapshot={view.snapshot} society={view.society} empires={view.empires} />}
             {tab === 'mine' && mode === 'live' && (
               <MinePanel mine={view.mine} acks={client.acks} onCommand={(n, a) => client.sendCommand(n, a)} />
             )}
@@ -170,7 +201,7 @@ export function App() {
         )}
       </main>
 
-      {view && view.events.length > 0 && (
+      {!showAuthGate && view && view.events.length > 0 && (
         <footer className="events">
           <span className="events-label">Feed</span>
           {view.events.slice(-6).map((e, i) => (

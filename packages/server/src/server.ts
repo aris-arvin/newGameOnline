@@ -14,6 +14,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { createWorld, tick, startNextSeason, spectateSnapshot } from '@pure-galaxy/world-core';
 import type { BattleResolver, WorldData, WorldState } from '@pure-galaxy/world-core';
 import { COMMANDS } from './commands.js';
+import { AccountStore, publicAccount } from './auth.js';
 import { MemoryPersistence, type Persistence } from './persistence.js';
 import type { ClientMessage, EmpireInfo, GalaxyDto, MineView, Ownership, ServerMessage, Society } from './protocol.js';
 
@@ -21,6 +22,9 @@ export interface GameServerOptions {
   data: WorldData;
   resolver: BattleResolver;
   persistence?: Persistence;
+  /** When set, claiming an empire requires a valid session token and the
+   *  empire is bound to the account. Omit for the legacy tokenless mode. */
+  accounts?: AccountStore;
   seed?: number;
   races?: string[];
   tickIntervalMs?: number;
@@ -30,6 +34,7 @@ export interface GameServerOptions {
 
 interface ClientState {
   empireId: string | null;
+  accountId: string | null;
   tokens: number;
   lastRefill: number;
 }
@@ -42,6 +47,7 @@ export class GameServer {
   private readonly data: WorldData;
   private readonly resolver: BattleResolver;
   private readonly persistence: Persistence;
+  private readonly accounts: AccountStore | null;
   private readonly opts: Required<Pick<GameServerOptions, 'tickIntervalMs' | 'autoTick' | 'autosaveEveryTicks'>>;
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -55,6 +61,7 @@ export class GameServer {
     this.data = options.data;
     this.resolver = options.resolver;
     this.persistence = options.persistence ?? new MemoryPersistence();
+    this.accounts = options.accounts ?? null;
     this.opts = {
       tickIntervalMs: options.tickIntervalMs ?? 2000,
       autoTick: options.autoTick ?? true,
@@ -71,7 +78,12 @@ export class GameServer {
 
   /** Start listening. Returns the bound port (use 0 for an ephemeral one). */
   start(port = 0): Promise<number> {
-    this.httpServer = http.createServer((req, res) => this.handleRest(req, res));
+    this.httpServer = http.createServer((req, res) => {
+      this.handleRest(req, res).catch(() => {
+        if (!res.headersSent) res.statusCode = 500;
+        res.end(JSON.stringify({ error: 'internal error' }));
+      });
+    });
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.wss.on('connection', (ws) => this.handleConnection(ws));
 
@@ -125,16 +137,19 @@ export class GameServer {
   // --- WebSocket ---------------------------------------------------------
 
   private handleConnection(ws: WebSocket): void {
-    const state: ClientState = { empireId: null, tokens: RATE_CAP, lastRefill: Date.now() };
+    const state: ClientState = { empireId: null, accountId: null, tokens: RATE_CAP, lastRefill: Date.now() };
     this.clients.set(ws, state);
     ws.on('message', (raw) => this.handleMessage(ws, state, raw));
     ws.on('close', () => {
-      if (state.empireId) this.claimed.delete(state.empireId);
+      // In accounts mode the empire stays bound to the account; only the
+      // legacy tokenless claim is released on disconnect.
+      if (!this.accounts && state.empireId) this.claimed.delete(state.empireId);
       this.clients.delete(ws);
     });
     this.send(ws, {
       type: 'welcome',
       empireId: null,
+      username: null,
       tick: this.world.time,
       season: this.world.season.number,
       public: spectateSnapshot(this.world, this.data),
@@ -171,11 +186,28 @@ export class GameServer {
     state.tokens -= 1;
 
     if (msg.type === 'join') {
-      const empireId = this.claimEmpire(msg.empireId);
+      let empireId: string | null;
+      let username: string | null = null;
+      if (this.accounts) {
+        // Accounts mode: a valid token is required to control an empire;
+        // anyone else joins as a read-only spectator.
+        const account = this.accounts.validateToken(msg.token);
+        if (account) {
+          state.accountId = account.id;
+          username = account.username;
+          empireId = this.assignEmpireForAccount(account.id);
+        } else {
+          state.accountId = null;
+          empireId = null;
+        }
+      } else {
+        empireId = this.claimEmpire(msg.empireId);
+      }
       state.empireId = empireId;
       this.send(ws, {
         type: 'welcome',
         empireId,
+        username,
         tick: this.world.time,
         season: this.world.season.number,
         public: spectateSnapshot(this.world, this.data),
@@ -226,6 +258,26 @@ export class GameServer {
       }
     }
     return null; // spectator
+  }
+
+  private isPlayableEmpire(id: string): boolean {
+    const e = this.world.empires[id];
+    return !!e && !e.pirate && !e.ancient;
+  }
+
+  /** Resolve the empire an account controls, assigning a free one on first join
+   *  and persisting the binding so it is theirs on every future connection. */
+  private assignEmpireForAccount(accountId: string): string | null {
+    const store = this.accounts!;
+    const bound = store.get(accountId)?.empireId ?? null;
+    if (bound && this.isPlayableEmpire(bound)) return bound;
+    const taken = store.boundEmpires();
+    for (const id of Object.keys(this.world.empires).sort()) {
+      if (taken.has(id) || !this.isPlayableEmpire(id)) continue;
+      store.bindEmpire(accountId, id);
+      return id;
+    }
+    return null; // galaxy full — spectate for now
   }
 
   /** Public galaxy structure, cached per season (it only changes on restart). */
@@ -340,18 +392,29 @@ export class GameServer {
 
   // --- REST --------------------------------------------------------------
 
-  private handleRest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private async handleRest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Content-Type', 'application/json');
     const url = req.url ?? '/';
+    const method = req.method ?? 'GET';
+
+    if (method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     if (url === '/health') {
       res.end(
         JSON.stringify({
           ok: true,
           tick: this.world.time,
           season: this.world.season.number,
-          players: [...this.claimed],
-          empires: Object.keys(this.world.empires).filter((id) => !this.world.empires[id].pirate && !this.world.empires[id].ancient).length,
+          players: this.accounts ? [...this.accounts.boundEmpires()] : [...this.claimed],
+          accounts: this.accounts ? this.accounts.size : undefined,
+          empires: Object.keys(this.world.empires).filter((id) => this.isPlayableEmpire(id)).length,
         }),
       );
       return;
@@ -360,7 +423,57 @@ export class GameServer {
       res.end(JSON.stringify(spectateSnapshot(this.world, this.data)));
       return;
     }
+
+    // --- Auth (only when an account store is configured) ---
+    if (this.accounts && method === 'POST' && (url === '/auth/register' || url === '/auth/login')) {
+      let creds: { username?: string; password?: string };
+      try {
+        creds = JSON.parse((await this.readBody(req)) || '{}') as { username?: string; password?: string };
+      } catch {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ ok: false, error: 'invalid JSON' }));
+        return;
+      }
+      const result =
+        url === '/auth/register'
+          ? this.accounts.register(creds.username ?? '', creds.password ?? '')
+          : this.accounts.login(creds.username ?? '', creds.password ?? '');
+      if (!result.ok || !result.account) {
+        res.statusCode = url === '/auth/register' ? 409 : 401;
+        res.end(JSON.stringify({ ok: false, error: result.error }));
+        return;
+      }
+      res.end(JSON.stringify({ ok: true, token: result.token, account: publicAccount(result.account) }));
+      return;
+    }
+
+    if (this.accounts && method === 'GET' && url.startsWith('/auth/me')) {
+      const token = this.bearer(req) ?? new URL(url, 'http://localhost').searchParams.get('token') ?? undefined;
+      const account = this.accounts.validateToken(token);
+      if (!account) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+      res.end(JSON.stringify({ ok: true, account: publicAccount(account) }));
+      return;
+    }
+
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'not found' }));
+  }
+
+  private readBody(req: http.IncomingMessage): Promise<string> {
+    return new Promise((resolve) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c as Buffer));
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      req.on('error', () => resolve(''));
+    });
+  }
+
+  private bearer(req: http.IncomingMessage): string | undefined {
+    const h = req.headers['authorization'];
+    return typeof h === 'string' && h.startsWith('Bearer ') ? h.slice(7) : undefined;
   }
 }

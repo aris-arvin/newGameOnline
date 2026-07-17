@@ -7,7 +7,7 @@
 import type { Snapshot } from '@pure-galaxy/world-core';
 
 export type ClientMessage =
-  | { type: 'join'; empireId?: string }
+  | { type: 'join'; empireId?: string; token?: string }
   | { type: 'command'; name: string; args?: Record<string, unknown> }
   | { type: 'ping' };
 
@@ -66,6 +66,7 @@ export type ServerMessage =
   | {
       type: 'welcome';
       empireId: string | null;
+      username: string | null;
       tick: number;
       season: number;
       public: Snapshot;

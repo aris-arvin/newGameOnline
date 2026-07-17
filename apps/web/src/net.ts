@@ -10,7 +10,7 @@ import type { Snapshot } from '@pure-galaxy/world-core';
 export type ConnStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 type ServerMessage =
-  | { type: 'welcome'; empireId: string | null; tick: number; season: number; public: Snapshot; mine: MineView | null; galaxy: GalaxyDto; empires: EmpireInfo[]; ownership: Ownership; society: Society }
+  | { type: 'welcome'; empireId: string | null; username: string | null; tick: number; season: number; public: Snapshot; mine: MineView | null; galaxy: GalaxyDto; empires: EmpireInfo[]; ownership: Ownership; society: Society }
   | { type: 'snapshot'; tick: number; public: Snapshot; mine: MineView | null; ownership: Ownership; society: Society }
   | { type: 'lobby'; galaxy: GalaxyDto; empires: EmpireInfo[] }
   | { type: 'ack'; name: string; ok: boolean; message: string }
@@ -32,7 +32,10 @@ export class LiveClient {
   acks: Ack[] = [];
   lastError = '';
 
+  username: string | null = null;
+
   private ws: WebSocket | null = null;
+  private token: string | null = null;
   private galaxy: GalaxyDto | null = null;
   private empires: EmpireInfo[] = [];
   private events: GameEvent[] = [];
@@ -46,8 +49,9 @@ export class LiveClient {
     for (const cb of this.listeners) cb();
   }
 
-  connect(url: string): void {
+  connect(url: string, token?: string): void {
     this.disconnect();
+    this.token = token ?? null;
     this.status = 'connecting';
     this.lastError = '';
     this.notify();
@@ -63,7 +67,7 @@ export class LiveClient {
     this.ws = ws;
     ws.onopen = () => {
       this.status = 'connected';
-      ws.send(JSON.stringify({ type: 'join' }));
+      ws.send(JSON.stringify(this.token ? { type: 'join', token: this.token } : { type: 'join' }));
       this.notify();
     };
     ws.onmessage = (ev) => this.handle(JSON.parse(ev.data as string) as ServerMessage);
@@ -86,6 +90,8 @@ export class LiveClient {
     }
     this.status = 'disconnected';
     this.empireId = null;
+    this.username = null;
+    this.token = null;
     this.view = null;
     this.galaxy = null;
     this.events = [];
@@ -99,6 +105,7 @@ export class LiveClient {
     switch (msg.type) {
       case 'welcome':
         this.empireId = msg.empireId;
+        this.username = msg.username;
         this.galaxy = msg.galaxy;
         this.empires = msg.empires;
         this.rebuild(msg.public, msg.mine, msg.ownership, msg.society);
