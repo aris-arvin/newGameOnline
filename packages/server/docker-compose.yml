@@ -1,0 +1,39 @@
+# Local Postgres + Redis for the PURE GALAXY server (design prompt §18.2).
+#
+#   docker compose -f packages/server/docker-compose.yml up -d
+#   pnpm add --filter @pure-galaxy/server pg redis      # one-time: DB drivers
+#   DATABASE_URL=postgres://pg:pg@localhost:5432/pure_galaxy \
+#   REDIS_URL=redis://localhost:6379 \
+#     pnpm --filter @pure-galaxy/server run serve
+#
+# With neither URL set the server persists to .data/*.json and needs no DB.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pg
+      POSTGRES_PASSWORD: pg
+      POSTGRES_DB: pure_galaxy
+    ports:
+      - '5432:5432'
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pg -d pure_galaxy']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # Persist sessions across restarts (append-only file) so refresh tokens and
+    # accounts aren't lost when Redis is more than a volatile cache.
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+
+volumes:
+  pg-data:
+  redis-data:
