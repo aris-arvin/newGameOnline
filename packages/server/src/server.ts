@@ -14,7 +14,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { createWorld, tick, startNextSeason, spectateSnapshot } from '@pure-galaxy/world-core';
 import type { BattleResolver, WorldData, WorldState } from '@pure-galaxy/world-core';
 import { COMMANDS } from './commands.js';
-import { AccountStore, publicAccount } from './auth.js';
+import { AccountStore, publicAccount, REFRESH_TTL_MS } from './auth.js';
 import { MemoryPersistence, type Persistence } from './persistence.js';
 import type { ClientMessage, EmpireInfo, GalaxyDto, MineView, Ownership, ServerMessage, Society } from './protocol.js';
 
@@ -25,11 +25,26 @@ export interface GameServerOptions {
   /** When set, claiming an empire requires a valid session token and the
    *  empire is bound to the account. Omit for the legacy tokenless mode. */
   accounts?: AccountStore;
+  /** HTTP-only refresh-cookie policy. Defaults are production-safe (Secure,
+   *  SameSite=Lax, scoped to /auth); a dev server over plain HTTP sets
+   *  secure:false so the browser will actually store the cookie. */
+  authCookie?: { name?: string; secure?: boolean; sameSite?: 'Lax' | 'Strict' | 'None'; path?: string; domain?: string };
+  /** Allowed browser origins for credentialed CORS. Omit to reflect any
+   *  origin (fine behind a same-origin proxy; set an allowlist in prod). */
+  corsOrigins?: string[];
   seed?: number;
   races?: string[];
   tickIntervalMs?: number;
   autoTick?: boolean;
   autosaveEveryTicks?: number;
+}
+
+interface CookieConfig {
+  name: string;
+  secure: boolean;
+  sameSite: 'Lax' | 'Strict' | 'None';
+  path: string;
+  domain?: string;
 }
 
 interface ClientState {
@@ -48,6 +63,8 @@ export class GameServer {
   private readonly resolver: BattleResolver;
   private readonly persistence: Persistence;
   private readonly accounts: AccountStore | null;
+  private readonly cookie: CookieConfig;
+  private readonly corsOrigins: string[] | null;
   private readonly opts: Required<Pick<GameServerOptions, 'tickIntervalMs' | 'autoTick' | 'autosaveEveryTicks'>>;
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -62,6 +79,14 @@ export class GameServer {
     this.resolver = options.resolver;
     this.persistence = options.persistence ?? new MemoryPersistence();
     this.accounts = options.accounts ?? null;
+    this.cookie = {
+      name: options.authCookie?.name ?? 'pg_refresh',
+      secure: options.authCookie?.secure ?? true,
+      sameSite: options.authCookie?.sameSite ?? 'Lax',
+      path: options.authCookie?.path ?? '/auth',
+      domain: options.authCookie?.domain,
+    };
+    this.corsOrigins = options.corsOrigins ?? null;
     this.opts = {
       tickIntervalMs: options.tickIntervalMs ?? 2000,
       autoTick: options.autoTick ?? true,
@@ -393,9 +418,7 @@ export class GameServer {
   // --- REST --------------------------------------------------------------
 
   private async handleRest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    this.applyCors(req, res);
     res.setHeader('Content-Type', 'application/json');
     const url = req.url ?? '/';
     const method = req.method ?? 'GET';
@@ -443,24 +466,87 @@ export class GameServer {
         res.end(JSON.stringify({ ok: false, error: result.error }));
         return;
       }
-      res.end(JSON.stringify({ ok: true, token: result.token, account: publicAccount(result.account) }));
+      // Long-lived refresh token → HTTP-only cookie; short-lived access token
+      // → response body (the client keeps it in memory only).
+      this.setRefreshCookie(res, this.accounts.issueRefresh(result.account.id));
+      res.end(JSON.stringify({ ok: true, accessToken: result.token, account: publicAccount(result.account) }));
       return;
     }
 
-    if (this.accounts && method === 'GET' && url.startsWith('/auth/me')) {
-      const token = this.bearer(req) ?? new URL(url, 'http://localhost').searchParams.get('token') ?? undefined;
-      const account = this.accounts.validateToken(token);
-      if (!account) {
+    // Silent session resume: rotate the refresh cookie, mint a fresh access token.
+    if (this.accounts && method === 'POST' && url === '/auth/refresh') {
+      const raw = this.parseCookies(req)[this.cookie.name];
+      const r = this.accounts.rotateRefresh(raw);
+      if (!r.ok || !r.accountId) {
+        this.clearRefreshCookie(res); // drop a stale/compromised cookie
         res.statusCode = 401;
-        res.end(JSON.stringify({ ok: false }));
+        res.end(JSON.stringify({ ok: false, error: r.reuse ? 'session revoked' : 'not authenticated' }));
         return;
       }
-      res.end(JSON.stringify({ ok: true, account: publicAccount(account) }));
+      this.setRefreshCookie(res, r.refresh!);
+      const account = this.accounts.get(r.accountId);
+      res.end(JSON.stringify({ ok: true, accessToken: r.token, account: account ? publicAccount(account) : null }));
+      return;
+    }
+
+    if (this.accounts && method === 'POST' && url === '/auth/logout') {
+      this.accounts.revokeRefresh(this.parseCookies(req)[this.cookie.name]);
+      this.clearRefreshCookie(res);
+      res.statusCode = 204;
+      res.end();
       return;
     }
 
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'not found' }));
+  }
+
+  // --- CORS + cookies ----------------------------------------------------
+
+  private applyCors(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const origin = req.headers.origin;
+    if (typeof origin === 'string' && (!this.corsOrigins || this.corsOrigins.includes(origin))) {
+      // Credentialed CORS can't use "*": echo the (allowed) origin instead.
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    } else if (!origin) {
+      res.setHeader('Access-Control-Allow-Origin', '*'); // non-browser callers (health checks)
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+
+  private parseCookies(req: http.IncomingMessage): Record<string, string> {
+    const out: Record<string, string> = {};
+    const raw = req.headers.cookie;
+    if (typeof raw === 'string') {
+      for (const part of raw.split(';')) {
+        const i = part.indexOf('=');
+        if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      }
+    }
+    return out;
+  }
+
+  private setRefreshCookie(res: http.ServerResponse, value: string): void {
+    res.setHeader('Set-Cookie', this.cookieString(value, REFRESH_TTL_MS / 1000));
+  }
+  private clearRefreshCookie(res: http.ServerResponse): void {
+    res.setHeader('Set-Cookie', this.cookieString('', 0));
+  }
+  private cookieString(value: string, maxAgeSec: number): string {
+    const c = this.cookie;
+    const parts = [
+      `${c.name}=${encodeURIComponent(value)}`,
+      `Path=${c.path}`,
+      `Max-Age=${Math.floor(maxAgeSec)}`,
+      'HttpOnly',
+      `SameSite=${c.sameSite}`,
+    ];
+    if (c.secure) parts.push('Secure');
+    if (c.domain) parts.push(`Domain=${c.domain}`);
+    return parts.join('; ');
   }
 
   private readBody(req: http.IncomingMessage): Promise<string> {
@@ -470,10 +556,5 @@ export class GameServer {
       req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
       req.on('error', () => resolve(''));
     });
-  }
-
-  private bearer(req: http.IncomingMessage): string | undefined {
-    const h = req.headers['authorization'];
-    return typeof h === 'string' && h.startsWith('Bearer ') ? h.slice(7) : undefined;
   }
 }

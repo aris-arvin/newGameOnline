@@ -54,21 +54,34 @@ async function makeAuthServer(): Promise<{ server: GameServer; port: number; acc
 
 interface AuthBody {
   ok: boolean;
-  token?: string;
+  accessToken?: string;
   error?: string;
   account?: { id: string; username: string; empireId: string | null };
 }
-async function post(port: number, path: string, body: unknown): Promise<{ status: number; body: AuthBody }> {
+async function post(
+  port: number,
+  path: string,
+  body?: unknown,
+  cookie?: string,
+): Promise<{ status: number; body: AuthBody; setCookie: string[] }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`http://localhost:${port}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, body: (await res.json()) as AuthBody };
+  const setCookie = res.headers.getSetCookie();
+  const text = await res.text();
+  return { status: res.status, body: text ? (JSON.parse(text) as AuthBody) : ({ ok: res.ok } as AuthBody), setCookie };
 }
 async function registerToken(port: number, username: string, password: string): Promise<string> {
   const { body } = await post(port, '/auth/register', { username, password });
-  return body.token!;
+  return body.accessToken!;
+}
+/** Pull the refresh cookie's "name=value" pair out of a Set-Cookie header. */
+function cookiePair(setCookie: string[]): string {
+  return setCookie[0].split(';')[0];
 }
 
 type Welcome = Extract<ServerMessage, { type: 'welcome' }>;
@@ -122,26 +135,111 @@ describe('AccountStore (§18.2 auth service)', () => {
     expect(s2.validateToken(token)!.id).toBe(account!.id); // signing secret survived
     expect(s2.get(account!.id)!.empireId).toBe('emp2');
   });
+
+  it('rotates refresh tokens and detects replay of a used one', () => {
+    const store = new AccountStore();
+    const { account } = store.register('Rot', 'password1');
+    const raw1 = store.issueRefresh(account!.id);
+
+    const r1 = store.rotateRefresh(raw1);
+    expect(r1.ok).toBe(true);
+    expect(r1.accountId).toBe(account!.id);
+    expect(r1.refresh).toBeTruthy();
+    expect(r1.token).toBeTruthy();
+
+    // The consumed token can't be rotated again — that's a replay.
+    const replay = store.rotateRefresh(raw1);
+    expect(replay.ok).toBe(false);
+    expect(replay.reuse).toBe(true);
+
+    // Reuse detection revokes the family, so the successor is dead too.
+    expect(store.rotateRefresh(r1.refresh).ok).toBe(false);
+  });
+
+  it('revokes a refresh session and rejects unknown tokens', () => {
+    const store = new AccountStore();
+    const { account } = store.register('Rev', 'password1');
+    const raw = store.issueRefresh(account!.id);
+    expect(store.revokeRefresh(raw)).toBe(true);
+    expect(store.rotateRefresh(raw).ok).toBe(false);
+    expect(store.rotateRefresh('deadbeef').ok).toBe(false);
+    expect(store.rotateRefresh(undefined).ok).toBe(false);
+  });
+
+  it('persists refresh tokens across a reload', () => {
+    const p = new MemoryAccountPersistence();
+    const s1 = new AccountStore(p);
+    const { account } = s1.register('RefPersist', 'password1');
+    const raw = s1.issueRefresh(account!.id);
+    const s2 = new AccountStore(p);
+    expect(s2.rotateRefresh(raw).ok).toBe(true);
+  });
 });
 
 describe('authenticated multiplayer (§18.4)', () => {
-  it('registers and logs in over REST with proper status codes', async () => {
+  it('registers and logs in over REST with proper status codes and an HTTP-only cookie', async () => {
     const { port } = await makeAuthServer();
     const reg = await post(port, '/auth/register', { username: 'Alice', password: 'password1' });
     expect(reg.status).toBe(200);
     expect(reg.body.ok).toBe(true);
-    expect(reg.body.token).toBeTruthy();
+    expect(reg.body.accessToken).toBeTruthy();
     expect(reg.body.account!.username).toBe('Alice');
+    // Refresh token is delivered only as an HttpOnly cookie, never in the body.
+    expect(reg.setCookie.length).toBe(1);
+    expect(reg.setCookie[0]).toMatch(/HttpOnly/i);
+    expect(reg.setCookie[0]).toMatch(/pg_refresh=/);
+    expect(JSON.stringify(reg.body)).not.toContain('pg_refresh');
 
     const dup = await post(port, '/auth/register', { username: 'Alice', password: 'password1' });
     expect(dup.status).toBe(409);
 
     const login = await post(port, '/auth/login', { username: 'Alice', password: 'password1' });
     expect(login.status).toBe(200);
-    expect(login.body.token).toBeTruthy();
+    expect(login.body.accessToken).toBeTruthy();
+    expect(login.setCookie[0]).toMatch(/HttpOnly/i);
 
     const bad = await post(port, '/auth/login', { username: 'Alice', password: 'nope' });
     expect(bad.status).toBe(401);
+  });
+
+  it('resumes a session by rotating the refresh cookie, and revokes it on logout', async () => {
+    const { port } = await makeAuthServer();
+    const reg = await post(port, '/auth/register', { username: 'Nomad', password: 'password1' });
+    const cookie1 = cookiePair(reg.setCookie);
+
+    // Refresh with the cookie → new access token + a rotated cookie.
+    const r1 = await post(port, '/auth/refresh', undefined, cookie1);
+    expect(r1.status).toBe(200);
+    expect(r1.body.accessToken).toBeTruthy();
+    expect(r1.body.account!.username).toBe('Nomad');
+    const cookie2 = cookiePair(r1.setCookie);
+    expect(cookie2).not.toBe(cookie1); // rotation actually changed the token
+
+    // The rotated (old) cookie is now dead; replaying it fails (reuse ⇒ revoke).
+    const replay = await post(port, '/auth/refresh', undefined, cookie1);
+    expect(replay.status).toBe(401);
+
+    // Reuse detection revoked the whole family, so the fresh cookie dies too.
+    const afterReuse = await post(port, '/auth/refresh', undefined, cookie2);
+    expect(afterReuse.status).toBe(401);
+  });
+
+  it('logout revokes the refresh session', async () => {
+    const { port } = await makeAuthServer();
+    const reg = await post(port, '/auth/register', { username: 'Bye', password: 'password1' });
+    const cookie = cookiePair(reg.setCookie);
+
+    const logout = await post(port, '/auth/logout', undefined, cookie);
+    expect(logout.status).toBe(204);
+
+    const afterLogout = await post(port, '/auth/refresh', undefined, cookie);
+    expect(afterLogout.status).toBe(401);
+  });
+
+  it('refresh without a cookie is unauthorized', async () => {
+    const { port } = await makeAuthServer();
+    const r = await post(port, '/auth/refresh');
+    expect(r.status).toBe(401);
   });
 
   it('binds an empire to a token that survives reconnect; a second account gets a different empire', async () => {

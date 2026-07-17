@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { login, register } from '../auth';
-import type { Session } from '../auth';
+import type { Account } from '../auth';
 
 /**
- * The Live-mode gate: a player must register or log in before the server will
- * bind them to an empire. On success we hand the session (token) up to App,
- * which stores it and connects the WebSocket with the token.
+ * The Live-mode gate: a player registers or logs in before the server will bind
+ * them to an empire. On success the server sets an HTTP-only refresh cookie and
+ * returns a short-lived access token, which we hand up to App (kept in memory,
+ * never stored) to open the authenticated WebSocket.
  */
-export function AuthPanel({ wsUrl, onAuthed }: { wsUrl: string; onAuthed: (s: Session) => void }) {
+export function AuthPanel({ onAuthed }: { onAuthed: (r: { accessToken: string; account: Account }) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -17,11 +18,10 @@ export function AuthPanel({ wsUrl, onAuthed }: { wsUrl: string; onAuthed: (s: Se
   const submit = async () => {
     setBusy(true);
     setError('');
-    const fn = mode === 'login' ? login : register;
-    const result = await fn(wsUrl, username, password);
+    const result = await (mode === 'login' ? login : register)(username, password);
     setBusy(false);
-    if (result.ok && result.session) onAuthed(result.session);
-    else setError(result.error ?? 'authentication failed');
+    if (result.ok) onAuthed({ accessToken: result.accessToken, account: result.account });
+    else setError(result.error);
   };
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -76,7 +76,6 @@ export function AuthPanel({ wsUrl, onAuthed }: { wsUrl: string; onAuthed: (s: Se
             {mode === 'login' ? 'Register' : 'Log in'}
           </button>
         </p>
-        <p className="muted auth-server">server: {wsUrl}</p>
       </div>
     </div>
   );

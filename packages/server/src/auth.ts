@@ -1,17 +1,20 @@
 /**
  * Accounts & authentication (design prompt §18.2 `auth` service, §18.4).
  *
- * A self-contained account layer with no external dependencies: passwords are
- * per-user salted and scrypt-hashed, session tokens are HMAC-signed and
- * stateless (so they survive server restarts as long as the signing secret is
- * persisted alongside the accounts). Each account is bound to exactly one
- * empire — that binding is what makes an empire *yours* across reconnects and
- * season restarts, instead of grabbing whatever slot is free.
+ * Two-token model, production-shaped:
+ *  - a short-lived **access token** — HMAC-signed, stateless, ~15 min — kept in
+ *    the client's memory and handed to the WebSocket `join`;
+ *  - a long-lived **refresh token** — opaque random, stored server-side as a
+ *    hash, delivered to the browser only as an HTTP-only cookie. It is rotated
+ *    on every use (a used token can't be replayed) and reuse of an already
+ *    rotated token revokes the whole session family — the classic stolen-token
+ *    tripwire.
  *
- * Persistence mirrors the world's pluggable pattern (memory + file adapters);
- * a production deployment would back the same interface with Postgres (§18.2).
+ * No external dependencies: scrypt for passwords, node:crypto HMAC for access
+ * tokens, sha256 for refresh-token storage. Persistence mirrors the world's
+ * pluggable pattern (memory + file); production would back it with Postgres.
  */
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -25,9 +28,20 @@ export interface Account {
   createdAt: number;
 }
 
+/** A stored refresh token — only its hash is persisted, never the raw value. */
+export interface RefreshRecord {
+  hash: string; // sha256(rawToken) hex
+  accountId: string;
+  family: string; // session id; rotation stays within one family
+  expiresAt: number;
+  rotated: boolean; // consumed by a successful rotation (replay ⇒ theft)
+  revoked: boolean; // explicitly killed (logout / reuse detection)
+}
+
 export interface AuthState {
-  secret: string; // hex — HMAC signing key
+  secret: string; // hex — HMAC signing key for access tokens
   accounts: Account[];
+  refresh: RefreshRecord[];
 }
 
 export interface AccountPersistence {
@@ -62,7 +76,8 @@ export class FileAccountPersistence implements AccountPersistence {
 }
 
 const SCRYPT_KEYLEN = 32;
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+export const ACCESS_TTL_MS = 15 * 60 * 1000; // 15 minutes
+export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const MIN_PASSWORD = 8;
 
@@ -77,17 +92,31 @@ export interface AuthResult {
   ok: boolean;
   error?: string;
   account?: Account;
-  token?: string;
+  token?: string; // access token
+}
+
+/** Outcome of rotating a refresh token. */
+export interface RefreshResult {
+  ok: boolean;
+  reuse?: boolean; // a rotated token was replayed — family was revoked
+  accountId?: string;
+  refresh?: string; // new raw refresh token to re-cookie
+  token?: string; // new access token
 }
 
 export function publicAccount(a: Account): PublicAccount {
   return { id: a.id, username: a.username, empireId: a.empireId };
 }
 
+function sha256(s: string): string {
+  return createHash('sha256').update(s).digest('hex');
+}
+
 export class AccountStore {
   private secret: Buffer;
   private readonly accounts = new Map<string, Account>(); // id -> account
   private readonly byName = new Map<string, string>(); // usernameLower -> id
+  private readonly refresh = new Map<string, RefreshRecord>(); // hash -> record
   private nextId = 1;
 
   constructor(private readonly persistence: AccountPersistence = new MemoryAccountPersistence()) {
@@ -100,6 +129,7 @@ export class AccountStore {
         const n = Number(a.id.replace(/\D/g, ''));
         if (Number.isFinite(n) && n >= this.nextId) this.nextId = n + 1;
       }
+      for (const r of loaded.refresh ?? []) this.refresh.set(r.hash, r);
     } else {
       this.secret = randomBytes(32);
       this.flush();
@@ -107,7 +137,11 @@ export class AccountStore {
   }
 
   private flush(): void {
-    this.persistence.save({ secret: this.secret.toString('hex'), accounts: [...this.accounts.values()] });
+    this.persistence.save({
+      secret: this.secret.toString('hex'),
+      accounts: [...this.accounts.values()],
+      refresh: [...this.refresh.values()],
+    });
   }
 
   private hash(password: string, salt: Buffer): Buffer {
@@ -153,9 +187,11 @@ export class AccountStore {
     return { ok: true, account, token: this.issueToken(account.id) };
   }
 
-  /** Stateless signed token: base64url(accountId.expiry).base64url(hmac). */
+  // --- Access tokens (stateless, short-lived) ---
+
+  /** Signed token: base64url(accountId.expiry).base64url(hmac). */
   issueToken(accountId: string): string {
-    const body = `${accountId}.${Date.now() + TOKEN_TTL_MS}`;
+    const body = `${accountId}.${Date.now() + ACCESS_TTL_MS}`;
     const sig = createHmac('sha256', this.secret).update(body).digest('base64url');
     return `${Buffer.from(body).toString('base64url')}.${sig}`;
   }
@@ -174,6 +210,63 @@ export class AccountStore {
     if (!accountId || !expStr || Number(expStr) < Date.now()) return null;
     return this.accounts.get(accountId) ?? null;
   }
+
+  // --- Refresh tokens (server-side, rotating) ---
+
+  /** Mint a refresh token (raw returned once; only its hash is stored). */
+  issueRefresh(accountId: string, family?: string): string {
+    this.pruneExpired();
+    const raw = randomBytes(32).toString('hex');
+    const rec: RefreshRecord = {
+      hash: sha256(raw),
+      accountId,
+      family: family ?? randomBytes(9).toString('base64url'),
+      expiresAt: Date.now() + REFRESH_TTL_MS,
+      rotated: false,
+      revoked: false,
+    };
+    this.refresh.set(rec.hash, rec);
+    this.flush();
+    return raw;
+  }
+
+  /** Rotate a refresh token: validate, retire it, and issue its successor.
+   *  Replaying an already-rotated token trips reuse detection and revokes the
+   *  entire family (every token minted in that login session). */
+  rotateRefresh(raw: string | undefined): RefreshResult {
+    if (!raw) return { ok: false };
+    const rec = this.refresh.get(sha256(raw));
+    if (!rec || rec.revoked || rec.expiresAt < Date.now()) return { ok: false };
+    if (rec.rotated) {
+      this.revokeFamily(rec.family);
+      this.flush();
+      return { ok: false, reuse: true };
+    }
+    rec.rotated = true;
+    const next = this.issueRefresh(rec.accountId, rec.family); // flushes
+    return { ok: true, accountId: rec.accountId, refresh: next, token: this.issueToken(rec.accountId) };
+  }
+
+  /** Revoke the session behind a refresh token (used on logout). */
+  revokeRefresh(raw: string | undefined): boolean {
+    if (!raw) return false;
+    const rec = this.refresh.get(sha256(raw));
+    if (!rec) return false;
+    this.revokeFamily(rec.family);
+    this.flush();
+    return true;
+  }
+
+  private revokeFamily(family: string): void {
+    for (const r of this.refresh.values()) if (r.family === family) r.revoked = true;
+  }
+
+  private pruneExpired(): void {
+    const now = Date.now();
+    for (const [hash, r] of this.refresh) if (r.expiresAt < now) this.refresh.delete(hash);
+  }
+
+  // --- Accounts / empire binding ---
 
   get(accountId: string): Account | null {
     return this.accounts.get(accountId) ?? null;

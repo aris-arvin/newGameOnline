@@ -1,88 +1,71 @@
 /**
- * Client-side auth: talks to the server's REST auth endpoints and remembers the
- * session token in localStorage. The token is later handed to the WebSocket
- * `join` so the server binds this browser to the account's empire. Passwords
- * never touch storage — only the signed token does.
+ * Client-side auth (production model): the browser never stores a long-lived
+ * secret. The server keeps the refresh token in an HTTP-only cookie that JS
+ * cannot read (XSS-safe); this module only ever holds the short-lived **access
+ * token in memory**, handed to the WebSocket `join`. On load we silently
+ * `refresh()` — if the cookie is still valid the session resumes with no
+ * re-login. All requests send credentials so the cookie rides along.
+ *
+ * Requests go to `/auth/*` on the same origin (a dev/preview proxy or a prod
+ * reverse proxy forwards them to the game server), so the cookie is first-party.
  */
-export interface Session {
-  token: string;
+export interface Account {
+  id: string;
   username: string;
-  accountId: string;
   empireId: string | null;
 }
 
+export type AuthResult = { ok: true; accessToken: string; account: Account } | { ok: false; error: string };
+
 interface AuthResponse {
   ok: boolean;
-  token?: string;
+  accessToken?: string;
   error?: string;
-  account?: { id: string; username: string; empireId: string | null };
+  account?: Account | null;
 }
 
-export interface AuthOutcome {
-  ok: boolean;
-  session?: Session;
-  error?: string;
-}
+// Same-origin by default; override for a separately-hosted API.
+const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE as string | undefined) ?? '';
 
-const STORAGE_KEY = 'pg.session';
-
-/** ws://host:port → http://host:port (and wss → https). */
-export function restBase(wsUrl: string): string {
-  return wsUrl.replace(/^ws/, 'http');
-}
-
-async function authRequest(wsUrl: string, path: string, username: string, password: string): Promise<AuthOutcome> {
+async function call(path: string, body?: Record<string, unknown>): Promise<AuthResult> {
   let res: Response;
   try {
-    res = await fetch(`${restBase(wsUrl)}${path}`, {
+    res = await fetch(`${AUTH_BASE}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      credentials: 'include', // send/receive the HTTP-only refresh cookie
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
     return { ok: false, error: 'cannot reach server' };
   }
-  let body: AuthResponse;
+  let data: AuthResponse;
   try {
-    body = (await res.json()) as AuthResponse;
+    data = (await res.json()) as AuthResponse;
   } catch {
     return { ok: false, error: `server error (${res.status})` };
   }
-  if (!res.ok || !body.ok || !body.token || !body.account) {
-    return { ok: false, error: body.error ?? `request failed (${res.status})` };
+  if (!res.ok || !data.ok || !data.accessToken || !data.account) {
+    return { ok: false, error: data.error ?? `request failed (${res.status})` };
   }
-  return {
-    ok: true,
-    session: { token: body.token, username: body.account.username, accountId: body.account.id, empireId: body.account.empireId },
-  };
+  return { ok: true, accessToken: data.accessToken, account: data.account };
 }
 
-export function register(wsUrl: string, username: string, password: string): Promise<AuthOutcome> {
-  return authRequest(wsUrl, '/auth/register', username, password);
+export function register(username: string, password: string): Promise<AuthResult> {
+  return call('/auth/register', { username, password });
 }
-export function login(wsUrl: string, username: string, password: string): Promise<AuthOutcome> {
-  return authRequest(wsUrl, '/auth/login', username, password);
+export function login(username: string, password: string): Promise<AuthResult> {
+  return call('/auth/login', { username, password });
 }
-
-export function loadSession(): Session | null {
+/** Silent session resume: exchange the refresh cookie for a fresh access token. */
+export function refresh(): Promise<AuthResult> {
+  return call('/auth/refresh');
+}
+/** Revoke the refresh session server-side and clear the cookie. */
+export async function logout(): Promise<void> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
+    await fetch(`${AUTH_BASE}/auth/logout`, { method: 'POST', credentials: 'include' });
   } catch {
-    return null;
-  }
-}
-export function saveSession(session: Session): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  } catch {
-    /* storage unavailable — session lives for this page load only */
-  }
-}
-export function clearSession(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* ignore */
+    /* best-effort — the access token expires on its own anyway */
   }
 }

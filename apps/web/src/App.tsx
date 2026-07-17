@@ -4,8 +4,8 @@ import type { WorldState } from './engine';
 import { localGameView } from './model';
 import type { GameView } from './model';
 import { LiveClient } from './net';
-import { clearSession, loadSession, saveSession } from './auth';
-import type { Session } from './auth';
+import { logout as apiLogout, refresh } from './auth';
+import type { Account } from './auth';
 import { GalaxyView } from './views/GalaxyView';
 import { EmpireView } from './views/EmpireView';
 import { ShipLab } from './views/ShipLab';
@@ -14,6 +14,10 @@ import { AuthPanel } from './views/AuthPanel';
 
 type Tab = 'galaxy' | 'empire' | 'mine' | 'lab';
 type Mode = 'local' | 'live';
+interface Auth {
+  accessToken: string;
+  account: Account;
+}
 
 const DEFAULT_WS =
   typeof location !== 'undefined' ? `ws://${location.hostname || 'localhost'}:8787` : 'ws://localhost:8787';
@@ -40,22 +44,47 @@ export function App() {
   if (!clientRef.current) clientRef.current = new LiveClient();
   const client = clientRef.current;
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS);
-  const [session, setSession] = useState<Session | null>(() => loadSession());
+  const [auth, setAuth] = useState<Auth | null>(null);
+  const [resuming, setResuming] = useState(true);
 
   useEffect(() => client.subscribe(rerender), [client]);
   useEffect(() => {
     if (mode !== 'live') client.disconnect();
   }, [mode, client]);
 
-  const onAuthed = (s: Session) => {
-    saveSession(s);
-    setSession(s);
-    client.connect(wsUrl, s.token);
+  // Silent session resume: the HTTP-only refresh cookie (if any) mints a fresh
+  // access token without a re-login. Nothing sensitive lives in localStorage.
+  useEffect(() => {
+    let alive = true;
+    refresh().then((r) => {
+      if (!alive) return;
+      if (r.ok) setAuth({ accessToken: r.accessToken, account: r.account });
+      setResuming(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const onAuthed = (a: Auth) => {
+    setAuth(a);
+    client.connect(wsUrl, a.accessToken);
   };
-  const logout = () => {
+  // Always connect with a freshly-minted access token (the in-memory one may
+  // have aged out); refresh failure means the cookie is gone → back to the gate.
+  const connectFresh = async () => {
+    const r = await refresh();
+    if (r.ok) {
+      setAuth({ accessToken: r.accessToken, account: r.account });
+      client.connect(wsUrl, r.accessToken);
+    } else {
+      setAuth(null);
+    }
+  };
+  const doLogout = async () => {
     client.disconnect();
-    clearSession();
-    setSession(null);
+    await apiLogout();
+    setAuth(null);
     if (tab === 'mine') setTab('galaxy');
   };
 
@@ -70,7 +99,8 @@ export function App() {
 
   // Both modes converge on a single GameView; the views never learn which won.
   const view: GameView | null = mode === 'local' ? localGameView(worldRef.current) : client.view;
-  const showAuthGate = mode === 'live' && !session;
+  const showAuthGate = mode === 'live' && !auth && !resuming;
+  const showResuming = mode === 'live' && !auth && resuming;
 
   const clock = view ? view.snapshot.time : 0;
   const season = view ? view.snapshot.season : 0;
@@ -148,8 +178,8 @@ export function App() {
               onChange={(e) => setWsUrl(e.target.value)}
               disabled={client.status === 'connected'}
             />
-            {!session ? (
-              <span className="muted">log in to play →</span>
+            {!auth ? (
+              <span className="muted">{resuming ? 'restoring session…' : 'log in to play →'}</span>
             ) : (
               <>
                 {client.status === 'connected' ? (
@@ -157,18 +187,18 @@ export function App() {
                     Disconnect
                   </button>
                 ) : (
-                  <button className="btn primary" onClick={() => client.connect(wsUrl, session.token)}>
+                  <button className="btn primary" onClick={connectFresh}>
                     Connect
                   </button>
                 )}
                 <span className={`conn conn-${client.status}`}>{STATUS_LABEL[client.status] ?? client.status}</span>
-                <span className="badge">@{client.username ?? session.username}</span>
+                <span className="badge">@{client.username ?? auth.account.username}</span>
                 {client.empireId ? (
                   <span className="badge">empire {client.empireId}</span>
                 ) : client.status === 'connected' ? (
                   <span className="badge muted">spectator</span>
                 ) : null}
-                <button className="btn" onClick={logout}>
+                <button className="btn" onClick={doLogout}>
                   Log out
                 </button>
               </>
@@ -179,13 +209,18 @@ export function App() {
       </div>
 
       <main>
-        {showAuthGate ? (
-          <AuthPanel wsUrl={wsUrl} onAuthed={onAuthed} />
+        {showResuming ? (
+          <div className="panel">
+            <h3>Restoring session…</h3>
+            <p className="muted">Checking your saved login.</p>
+          </div>
+        ) : showAuthGate ? (
+          <AuthPanel onAuthed={onAuthed} />
         ) : !view ? (
           <div className="panel">
             <h3>Not connected</h3>
             <p className="muted">
-              Press Connect to join the live galaxy as <b>@{session?.username}</b>, or switch to Local to run the
+              Press Connect to join the live galaxy as <b>@{auth?.account.username}</b>, or switch to Local to run the
               simulation in your browser.
             </p>
           </div>
@@ -201,7 +236,7 @@ export function App() {
         )}
       </main>
 
-      {!showAuthGate && view && view.events.length > 0 && (
+      {!showAuthGate && !showResuming && view && view.events.length > 0 && (
         <footer className="events">
           <span className="events-label">Feed</span>
           {view.events.slice(-6).map((e, i) => (
