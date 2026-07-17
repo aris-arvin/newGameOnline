@@ -36,12 +36,48 @@ Development follows the roadmap in `GAME_PROMPT.md` §20. Two vertical slices ex
 Both are pure, server-authoritative, and fully deterministic — a simulation is a
 function of `(inputs, seed)` and reproduces bit-for-bit from a state/event hash.
 
-## Quick start
+## Play it locally
+
+Prerequisites: **Node 20+** and **pnpm**.
 
 ```bash
 pnpm install
-pnpm test          # all packages: shared + combat-core + world-core
+pnpm dev
+```
+
+`pnpm dev` starts the authoritative server (`http` + `ws` on `:8787`) and the
+Vite web client together, with prefixed logs and a clean Ctrl-C shutdown. Open
+the URL Vite prints (usually <http://localhost:5173>), flip the top-right
+toggle to **Live**, and **Register** a username — the server binds you an
+empire that stays yours across reconnects and seasons (the refresh session
+lives in an HTTP-only cookie, so a page reload silently resumes it). Then drive
+it from the **My Empire** tab — research sliders, per-colony governors, and
+colonize / expedition / recruit orders — and watch the shared galaxy tick
+forward. Open a second browser or a private window and register again to play
+a second empire in the **same** live world.
+
+> Prefer two terminals? `pnpm serve` (server) and `pnpm web` (client) do the
+> same thing separately. **Local** mode (the other toggle) still runs the whole
+> simulation in your browser with no server at all.
+
+Persistence defaults to JSON files under `packages/server/.data/` — no database
+required. To back the same server with Postgres + Redis instead (accounts in
+Postgres, refresh sessions in Redis, world checkpointed to Postgres):
+
+```bash
+docker compose -f packages/server/docker-compose.yml up -d
+pnpm add --filter @pure-galaxy/server pg redis          # one-time: DB drivers
+DATABASE_URL=postgres://pg:pg@localhost:5432/pure_galaxy \
+REDIS_URL=redis://localhost:6379 \
+  pnpm dev
+```
+
+Other scripts:
+
+```bash
+pnpm test          # every package: shared + combat-core + world-core + server
 pnpm typecheck
+pnpm build         # production web bundle (dist/)
 ```
 
 ## `@pure-galaxy/combat-core`
@@ -178,22 +214,26 @@ run is reproducible.
 
 ## `@pure-galaxy/web` — the client (vertical slice)
 
-A React + Vite app that runs the **real, unmodified engines in the browser**
-(no mock data, design prompt §18.3) with a dark, layered UI (§17):
+A React + Vite app with a dark, layered UI (§17) that runs in two modes behind
+one unified view-model — a **Local** sandbox that runs the **real, unmodified
+engines in the browser** (no mock data, §18.3), and a **Live** mode that
+authenticates and streams the shared world from the server. The tabs are the
+same in both:
 
-- **Galaxy** — an SVG map from `generateGalaxy` (systems, hyperlanes, colonies
-  coloured by owner) with a system/planet inspector showing biome, size,
-  richness and habitability.
+- **Galaxy** — an SVG map (systems, hyperlanes, colonies coloured by owner)
+  with a system/planet inspector showing biome, size, richness and habitability.
 - **Empires** — live standings, the Galactic Senate, Federation market prices,
-  society counters and the season victory banner, all from `spectateSnapshot`.
-  Tick controls advance the whole simulation.
+  society counters and the season victory banner, from `spectateSnapshot`.
+- **My Empire** (Live) — the command console: research sliders, per-colony
+  governor plans, and colonize / expedition / recruit orders, each round-tripped
+  through the server with an ack log.
 - **Ship Lab** — an interactive ship builder with **live** `computeShipStats`
   and a 3-v-3 `runBattle` sparring result (winner, rounds, survivors, replay
   hash) — the deterministic WEGO engine, in the browser.
 
 ```bash
-pnpm --filter @pure-galaxy/web run dev      # dev server
-pnpm --filter @pure-galaxy/web run build    # production build
+pnpm web                                    # dev server (proxies /auth → :8787)
+pnpm build                                  # production build (dist/)
 ```
 
 Making the client possible required the world core to be browser-safe: the
@@ -212,12 +252,20 @@ multiplayer while keeping the server the single source of truth (§2.1, §18.2,
 - **WebSocket streaming** — on each tick every client gets a public snapshot
   (no fog-of-war secrets), and each owning connection also gets a private "mine"
   view of its empire.
-- **Validated commands** — `join`, then ownership-checked commands
-  (`set_research`, `set_governor`, `dispatch_expedition`, `recruit_admiral`,
-  `colonize`) with per-connection rate limiting.
-- **REST** — `GET /health`, `GET /state`.
-- **Pluggable persistence** — in-memory and file adapters with a save/load
-  round-trip (a PostgreSQL/Redis adapter drops into the same interface).
+- **Accounts & sessions** (§18.4) — register / login with scrypt-hashed
+  passwords; a short-lived HMAC **access token** (in the client's memory) plus
+  a long-lived **refresh token** in an HTTP-only cookie, rotated on every use
+  with stolen-token reuse detection. A `join` is token-gated and **binds an
+  empire to the account**, so it's yours on every device and across seasons.
+- **Validated commands** — ownership-checked commands (`set_research`,
+  `set_governor`, `dispatch_expedition`, `recruit_admiral`, `colonize`) with
+  per-connection rate limiting.
+- **REST** — `GET /health`, `GET /state`, `POST /auth/{register,login,refresh,logout}`.
+- **Pluggable persistence** — memory / file by default, or **Postgres**
+  (world checkpoint + normalized account rows) and **Redis** (per-key refresh
+  sessions with native TTL) behind driver interfaces, selected by
+  `DATABASE_URL` / `REDIS_URL`; writes are coalesced write-behind so the tick
+  loop never blocks on the database.
 - **Season rollover** — on a victory or timeout the server soft-restarts into
   the next season, keeping players on their empires.
 
@@ -229,7 +277,7 @@ URL=ws://localhost:8787 pnpm --filter @pure-galaxy/server run smoke
 
 ## Status
 
-All five roadmap phases of simulation are built and tested (**93 tests**, CI-guarded),
+All five roadmap phases of simulation are built and tested (**120 tests**, CI-guarded),
 the two engines are joined by the world↔combat bridge, an authoritative server
 makes it multiplayer, and a browser client runs it live:
 
@@ -243,9 +291,11 @@ makes it multiplayer, and a browser client runs it live:
 - **Phase 4 — polish** (seasons + Legacy soft restart, honest-F2P monetization
   invariant, spectator/mobile snapshot, balance autobattler in CI).
 
-A **vertical-slice web client** (`apps/web`) runs the engines live in the
-browser, and an **authoritative server** (`packages/server`) streams a shared
-world over WebSocket. Still to come: connecting the web client to the live
-server, fleshing out the client (PixiJS battle replays, doctrine editor,
-planet/region management), and productionising persistence (PostgreSQL/Redis)
-and horizontal battle/sector sharding (§18.2).
+The **web client** (`apps/web`) is wired to the **authoritative server**
+(`packages/server`): players register/log in (HTTP-only cookie sessions),
+claim an account-bound empire, and issue commands against a shared world
+streamed over WebSocket — all runnable locally with `pnpm dev`. Persistence
+runs on files by default or on **Postgres + Redis** (§18.2). Still to come:
+fleshing out the client (PixiJS battle replays, a doctrine editor,
+planet/region management), CSRF hardening and rate-limiting the auth
+endpoints, and horizontal battle/sector sharding (§18.2).
